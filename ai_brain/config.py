@@ -8,6 +8,8 @@ from functools import lru_cache
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, SecretStr, ValidationError
 
+from .errors import ConfigurationError
+
 
 class LLMSettings(BaseModel):
     """Validated settings for OpenAI-backed LangChain clients."""
@@ -26,7 +28,7 @@ def get_settings() -> LLMSettings:
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         msg = "OPENAI_API_KEY is required in environment variables."
-        raise ValueError(msg)
+        raise ConfigurationError(msg)
 
     payload = {
         "api_key": api_key,
@@ -38,4 +40,5 @@ def get_settings() -> LLMSettings:
     try:
         return LLMSettings.model_validate(payload)
     except ValidationError as exc:
-        raise ValueError("Invalid AI Brain environment configuration.") from exc
+        message = "Invalid AI Brain environment configuration."
+        raise ConfigurationError(message) from exc
