@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from typing import Any, cast
@@ -10,10 +9,11 @@ from typing import Any, cast
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field
 
 from .errors import AnalysisPipelineError
 from .llm import get_chat_model
+from .prompts import EXTRACTION_SYSTEM_PROMPT, build_extraction_human_prompt
 from .schemas import (
     MISSING_INFORMATION_OPTIONS,
     STYLE_TAG_OPTIONS,
@@ -26,14 +26,6 @@ LOGGER = logging.getLogger(__name__)
 
 _STYLE_TAG_SET = set(STYLE_TAG_OPTIONS)
 _MISSING_SET = set(MISSING_INFORMATION_OPTIONS)
-
-_SYSTEM_PROMPT = (
-    "You are a tattoo studio intake analyst. "
-    "Analyze client_text together with style_tags from vision analysis. "
-    "Extract tattoo idea, placement, size estimate in cm, and color preference. "
-    "Return strictly valid JSON and do not include markdown or extra text."
-)
-
 
 class _ExtractionSubset(BaseModel):
     """Subset schema used to parse extraction fields from the LLM."""
@@ -118,24 +110,17 @@ class TattooTextExtractor:
     ) -> _ExtractionSubset:
         """Call the model and parse strict JSON output for extraction fields."""
         format_instructions = self._parser.get_format_instructions()
-        required_list = json.dumps(list(MISSING_INFORMATION_OPTIONS))
-        human_prompt = (
-            "Client text:\n"
-            f"{client_text}\n\n"
-            "Detected style tags:\n"
-            f"{json.dumps(style_tags)}\n\n"
-            "Reference image URLs provided:\n"
-            f"{json.dumps(image_urls)}\n\n"
-            "Required missing-information checklist:\n"
-            f"{required_list}\n\n"
-            "Identify missing_information using checklist values exactly.\n"
-            "Return JSON only and follow this schema:\n"
-            f"{format_instructions}"
+        human_prompt = build_extraction_human_prompt(
+            client_text=client_text,
+            style_tags=style_tags,
+            image_urls=image_urls,
+            required_items=MISSING_INFORMATION_OPTIONS,
+            format_instructions=format_instructions,
         )
 
         response = self._llm.invoke(
             [
-                SystemMessage(content=_SYSTEM_PROMPT),
+                SystemMessage(content=EXTRACTION_SYSTEM_PROMPT),
                 HumanMessage(content=human_prompt),
             ]
         )
