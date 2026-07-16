@@ -8,6 +8,8 @@ from langchain_openai import ChatOpenAI
 
 from .config import get_settings
 
+_DETERMINISTIC_TEMPERATURE = 0.0
+
 
 @lru_cache(maxsize=4)
 def get_chat_model(model_name: str = "gpt-4o") -> ChatOpenAI:
@@ -18,7 +20,7 @@ def get_chat_model(model_name: str = "gpt-4o") -> ChatOpenAI:
     return ChatOpenAI(
         api_key=settings.api_key.get_secret_value(),
         model=selected_model,
-        temperature=settings.temperature,
+        temperature=_DETERMINISTIC_TEMPERATURE,
         timeout=settings.timeout_seconds,
         max_retries=settings.max_retries,
     )
