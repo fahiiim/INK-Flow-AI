@@ -14,21 +14,12 @@ from langchain_openai import ChatOpenAI
 from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
 
 from .llm import get_chat_model
+from .prompts import VISION_SYSTEM_PROMPT
 from .schemas import STYLE_TAG_OPTIONS, StyleTag
 
 LOGGER = logging.getLogger(__name__)
 
 _STYLE_TAG_SET = set(STYLE_TAG_OPTIONS)
-
-_SYSTEM_PROMPT = (
-    "You are an expert tattoo artist and style analyst. "
-    "Review the provided images and return ONLY a JSON array. "
-    "Every array item must be from this exact list: "
-    '["fine-line", "watercolor", "minimal", "floral", "micro-realism", '
-    '"black-and-grey", "calligraphy", "traditional", "geometric", '
-    '"unknown"]. Do not add extra text.'
-)
-
 
 class TattooVisionAnalyzer:
     """Analyze reference images and return normalized style tags."""
@@ -108,12 +99,7 @@ class TattooVisionAnalyzer:
 
     def _invoke_vision_model(self, data_uris: list[str]) -> str:
         """Call the vision-capable model and return text content."""
-        content: list[dict[str, Any]] = [
-            {
-                "type": "text",
-                "text": "Return only a JSON array of style tags.",
-            }
-        ]
+        content: list[dict[str, Any]] = []
         for data_uri in data_uris:
             content.append(
                 {
@@ -124,7 +110,7 @@ class TattooVisionAnalyzer:
 
         response = self._llm.invoke(
             [
-                SystemMessage(content=_SYSTEM_PROMPT),
+                SystemMessage(content=VISION_SYSTEM_PROMPT),
                 HumanMessage(content=content),
             ]
         )
