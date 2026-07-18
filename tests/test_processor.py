@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ai_brain.processor import StudioAIBrain
-from ai_brain.schemas import AIExtractionOutput, TattooExtractionDraft
+from ai_brain.schemas import AIExtractionOutput, Message, TattooExtractionDraft
 
 
 class StubVisionAnalyzer:
@@ -28,16 +28,20 @@ class StubTextExtractor:
 
     def extract(
         self,
-        client_text: str,
+        current_message: str,
         style_tags: list[str],
-        image_urls: list[str] | None = None,
+        new_image_urls: list[str] | None = None,
+        existing_db_state: dict[str, object] | None = None,
+        recent_chat_history: list[Message] | None = None,
     ) -> TattooExtractionDraft:
         """Return pre-defined draft and track invocation arguments."""
         self.calls.append(
             {
-                "client_text": client_text,
+                "current_message": current_message,
                 "style_tags": style_tags,
-                "image_urls": image_urls or [],
+                "new_image_urls": new_image_urls or [],
+                "existing_db_state": existing_db_state or {},
+                "recent_chat_history": recent_chat_history or [],
             }
         )
         return self._draft
@@ -64,7 +68,7 @@ def test_process_inquiry_low_risk_fine_line_request() -> None:
             tattoo_idea="Small lotus linework",
             style_tags=["fine-line", "minimal"],
             placement="inner wrist",
-            size_estimate_cm="4",
+            size_estimate_cm="10",
             color_preference="black-and-grey",
             missing_information=[],
         )
@@ -74,7 +78,7 @@ def test_process_inquiry_low_risk_fine_line_request() -> None:
             tattoo_idea="Small lotus linework",
             style_tags=["fine-line", "minimal"],
             placement="inner wrist",
-            size_estimate_cm="4",
+            size_estimate_cm="10",
             color_preference="black-and-grey",
             suggested_artist="Nina",
             confidence_level="high",
@@ -93,17 +97,32 @@ def test_process_inquiry_low_risk_fine_line_request() -> None:
         text_extractor=extraction,
         router=router,
     )
+    history = [
+        Message(role="user", content="I originally wanted a 5cm lotus."),
+        Message(role="assistant", content="A 5cm wrist piece is possible."),
+    ]
 
     result = brain.process_inquiry(
-        text="I want a small fine-line lotus on my inner wrist.",
-        image_urls=["https://example.com/fine-line-reference.jpg"],
+        current_message="Actually make the fine-line lotus 10cm.",
+        new_image_urls=["https://example.com/new-reference.jpg"],
+        existing_db_state={"size": "5cm", "placement": "inner wrist"},
+        recent_chat_history=history,
     )
 
     assert result.suggested_artist == "Nina"
     assert result.risk_level == "low"
     assert result.style_tags == ["fine-line", "minimal"]
-    assert vision.calls == [["https://example.com/fine-line-reference.jpg"]]
+    assert result.size_estimate_cm == "10"
+    assert vision.calls == [["https://example.com/new-reference.jpg"]]
     assert extraction.calls[0]["style_tags"] == ["fine-line", "minimal"]
+    assert extraction.calls[0]["current_message"] == (
+        "Actually make the fine-line lotus 10cm."
+    )
+    assert extraction.calls[0]["existing_db_state"] == {
+        "size": "5cm",
+        "placement": "inner wrist",
+    }
+    assert extraction.calls[0]["recent_chat_history"] == history
     assert len(router.calls) == 1
 
 
@@ -149,11 +168,13 @@ def test_process_inquiry_high_risk_pricing_request() -> None:
     )
 
     result = brain.process_inquiry(
-        text=(
+        current_message=(
             "How much would a full traditional wolf chest tattoo cost? "
             "I want this booked soon."
         ),
-        image_urls=["https://example.com/traditional-reference.jpg"],
+        new_image_urls=["https://example.com/traditional-reference.jpg"],
+        existing_db_state={},
+        recent_chat_history=[],
     )
 
     assert result.suggested_artist == "Hoss"
@@ -214,13 +235,15 @@ def test_process_inquiry_request_with_no_images() -> None:
     )
 
     result = brain.process_inquiry(
-        text="I want a script tattoo but do not have any images yet.",
-        image_urls=[],
+        current_message="I want a script tattoo but have no images yet.",
+        new_image_urls=[],
+        existing_db_state={},
+        recent_chat_history=[],
     )
 
     assert result.style_tags == ["unknown"]
     assert result.suggested_artist == "Unclear"
     assert result.risk_level == "low"
     assert vision.calls == [[]]
-    assert extraction.calls[0]["image_urls"] == []
+    assert extraction.calls[0]["new_image_urls"] == []
     assert len(router.calls) == 1
