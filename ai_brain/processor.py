@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+from pydantic import ValidationError
+
 from .errors import AnalysisPipelineError
 from .extraction import TattooTextExtractor
 from .routing import TattooRouter
-from .schemas import AIExtractionOutput, TattooInquiryInput
+from .schemas import AIExtractionOutput, Message, TattooInquiryInput
 from .vision import TattooVisionAnalyzer
 
 
@@ -24,25 +28,68 @@ class StudioAIBrain:
 
     def process_inquiry(
         self,
-        text: str,
-        image_urls: list[str],
+        current_message: str | None = None,
+        new_image_urls: list[str] | None = None,
+        existing_db_state: dict[str, Any] | None = None,
+        recent_chat_history: list[Message] | None = None,
+        *,
+        text: str | None = None,
+        image_urls: list[str] | None = None,
     ) -> AIExtractionOutput:
-        """Process text and images into strict AIExtractionOutput."""
-        try:
-            inquiry = TattooInquiryInput(
-                client_text=text,
-                image_urls=image_urls,
-            )
-        except Exception as exc:
-            raise AnalysisPipelineError("Invalid inquiry payload.") from exc
+        """Process latest-message and supplied hybrid context.
 
-        style_tags = self.vision_analyzer.analyze_styles(inquiry.image_urls)
+        The text and image_urls keywords remain temporarily supported until
+        the API endpoint migrates to the canonical payload in Step 4.
+        """
+        inquiry = self._build_inquiry(
+            current_message=current_message,
+            new_image_urls=new_image_urls,
+            existing_db_state=existing_db_state,
+            recent_chat_history=recent_chat_history,
+            text=text,
+            image_urls=image_urls,
+        )
+
+        style_tags = self.vision_analyzer.analyze_styles(
+            inquiry.new_image_urls
+        )
         extracted = self.text_extractor.extract(
-            client_text=inquiry.client_text,
+            current_message=inquiry.current_message,
             style_tags=style_tags,
-            image_urls=inquiry.image_urls,
+            new_image_urls=inquiry.new_image_urls,
+            existing_db_state=inquiry.existing_db_state,
+            recent_chat_history=inquiry.recent_chat_history,
         )
         return self.router.route(extracted)
+
+    def _build_inquiry(
+        self,
+        current_message: str | None,
+        new_image_urls: list[str] | None,
+        existing_db_state: dict[str, Any] | None,
+        recent_chat_history: list[Message] | None,
+        text: str | None,
+        image_urls: list[str] | None,
+    ) -> TattooInquiryInput:
+        """Validate canonical values with temporary legacy fallbacks."""
+        resolved_message = current_message
+        if resolved_message is None:
+            resolved_message = text
+
+        resolved_images = new_image_urls
+        if resolved_images is None:
+            resolved_images = image_urls or []
+
+        payload: dict[str, Any] = {
+            "current_message": resolved_message,
+            "new_image_urls": resolved_images,
+            "existing_db_state": existing_db_state or {},
+            "recent_chat_history": recent_chat_history or [],
+        }
+        try:
+            return TattooInquiryInput.model_validate(payload)
+        except ValidationError as exc:
+            raise AnalysisPipelineError("Invalid inquiry payload.") from exc
 
 
 if __name__ == "__main__":
@@ -57,7 +104,12 @@ if __name__ == "__main__":
     ]
 
     try:
-        output = brain.process_inquiry(text=mock_text, image_urls=mock_images)
+        output = brain.process_inquiry(
+            current_message=mock_text,
+            new_image_urls=mock_images,
+            existing_db_state={},
+            recent_chat_history=[],
+        )
         print(output.model_dump_json(indent=2))
     except Exception as exc:
         print(f"Processor test run failed: {exc}")
