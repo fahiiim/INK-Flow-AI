@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from fastapi.testclient import TestClient
 
 from ai_brain.errors import AnalysisPipelineError, ConfigurationError
-from ai_brain.schemas import AIExtractionOutput
+from ai_brain.schemas import AIExtractionOutput, Message
 from api.dependencies import get_ai_brain
 from api.main import create_app
 
@@ -21,15 +23,24 @@ class StubAIBrain:
     ) -> None:
         self._result = result
         self._error = error
-        self.calls: list[tuple[str, list[str]]] = []
+        self.calls: list[dict[str, object]] = []
 
     def process_inquiry(
         self,
-        text: str,
-        image_urls: list[str],
+        current_message: str | None = None,
+        new_image_urls: list[str] | None = None,
+        existing_db_state: dict[str, Any] | None = None,
+        recent_chat_history: list[Message] | None = None,
     ) -> AIExtractionOutput:
         """Record request data and return or raise the configured outcome."""
-        self.calls.append((text, image_urls))
+        self.calls.append(
+            {
+                "current_message": current_message,
+                "new_image_urls": new_image_urls or [],
+                "existing_db_state": existing_db_state or {},
+                "recent_chat_history": recent_chat_history or [],
+            }
+        )
         if self._error:
             raise self._error
         if self._result is None:
@@ -103,29 +114,57 @@ def test_analyze_endpoint_returns_strict_output() -> None:
         response = client.post(
             "/api/v1/inquiries/analyze",
             json={
-                "client_text": "I want a 4 cm fine-line lotus on my wrist.",
-                "image_urls": ["https://example.com/lotus.jpg"],
+                "current_message": "Actually make the lotus 10cm.",
+                "new_image_urls": ["https://example.com/new-lotus.jpg"],
+                "existing_db_state": {
+                    "size": "5cm",
+                    "placement": "inner wrist",
+                },
+                "recent_chat_history": [
+                    {
+                        "role": "user",
+                        "content": "I first requested a 5cm lotus.",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "We recorded a 5cm size.",
+                    },
+                ],
             },
         )
 
     assert response.status_code == 200
     assert response.json() == output.model_dump(mode="json")
     assert brain.calls == [
-        (
-            "I want a 4 cm fine-line lotus on my wrist.",
-            ["https://example.com/lotus.jpg"],
-        )
+        {
+            "current_message": "Actually make the lotus 10cm.",
+            "new_image_urls": ["https://example.com/new-lotus.jpg"],
+            "existing_db_state": {
+                "size": "5cm",
+                "placement": "inner wrist",
+            },
+            "recent_chat_history": [
+                Message(
+                    role="user",
+                    content="I first requested a 5cm lotus.",
+                ),
+                Message(
+                    role="assistant",
+                    content="We recorded a 5cm size.",
+                ),
+            ],
+        }
     ]
 
 
 def test_analyze_endpoint_rejects_invalid_payload() -> None:
-    """FastAPI rejects empty client text before invoking the AI Brain."""
+    """FastAPI rejects an empty current message before invoking AI."""
     brain = StubAIBrain(result=_successful_output())
 
     with _client_with_brain(brain) as client:
         response = client.post(
             "/api/v1/inquiries/analyze",
-            json={"client_text": "", "image_urls": []},
+            json={"current_message": "", "new_image_urls": []},
         )
 
     assert response.status_code == 422
@@ -141,12 +180,30 @@ def test_analyze_endpoint_maps_pipeline_error() -> None:
     with _client_with_brain(brain) as client:
         response = client.post(
             "/api/v1/inquiries/analyze",
-            json={"client_text": "Valid inquiry", "image_urls": []},
+            json={"current_message": "Valid inquiry", "new_image_urls": []},
         )
 
     assert response.status_code == 400
     assert response.json() == {
         "detail": "Inquiry could not be processed.",
+    }
+
+
+def test_analyze_endpoint_maps_configuration_error() -> None:
+    """AI configuration failures become service-unavailable responses."""
+    brain = StubAIBrain(
+        error=ConfigurationError("OPENAI_API_KEY is missing."),
+    )
+
+    with _client_with_brain(brain) as client:
+        response = client.post(
+            "/api/v1/inquiries/analyze",
+            json={"current_message": "Valid inquiry", "new_image_urls": []},
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "AI service is not configured.",
     }
 
 
@@ -157,7 +214,7 @@ def test_analyze_endpoint_hides_unexpected_errors() -> None:
     with _client_with_brain(brain) as client:
         response = client.post(
             "/api/v1/inquiries/analyze",
-            json={"client_text": "Valid inquiry", "image_urls": []},
+            json={"current_message": "Valid inquiry", "new_image_urls": []},
         )
 
     assert response.status_code == 502
