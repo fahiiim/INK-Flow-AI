@@ -17,6 +17,7 @@ from .prompts import EXTRACTION_SYSTEM_PROMPT, build_extraction_human_prompt
 from .schemas import (
     MISSING_INFORMATION_OPTIONS,
     STYLE_TAG_OPTIONS,
+    Message,
     MissingInformationItem,
     StyleTag,
     TattooExtractionDraft,
@@ -26,6 +27,7 @@ LOGGER = logging.getLogger(__name__)
 
 _STYLE_TAG_SET = set(STYLE_TAG_OPTIONS)
 _MISSING_SET = set(MISSING_INFORMATION_OPTIONS)
+
 
 class _ExtractionSubset(BaseModel):
     """Subset schema used to parse extraction fields from the LLM."""
@@ -63,57 +65,75 @@ class TattooTextExtractor:
 
     def extract(
         self,
-        client_text: str,
+        current_message: str,
         style_tags: list[str],
-        image_urls: list[str] | None = None,
+        new_image_urls: list[str] | None = None,
+        existing_db_state: dict[str, Any] | None = None,
+        recent_chat_history: list[Message] | None = None,
     ) -> TattooExtractionDraft:
-        """Extract tattoo details and identify missing intake information."""
-        normalized_text = client_text.strip()
-        if not normalized_text:
-            raise AnalysisPipelineError("client_text must not be empty.")
+        """Extract details from the latest message and supplied context."""
+        normalized_message = current_message.strip()
+        if not normalized_message:
+            raise AnalysisPipelineError("current_message must not be empty.")
 
         normalized_tags = self._normalize_style_tags(style_tags)
-        safe_image_urls = image_urls or []
+        safe_image_urls = list(new_image_urls or [])
+        safe_db_state = dict(existing_db_state or {})
+        safe_chat_history = list(recent_chat_history or [])
 
         try:
             llm_output = self._invoke_extraction_llm(
-                client_text=normalized_text,
+                current_message=normalized_message,
                 style_tags=normalized_tags,
-                image_urls=safe_image_urls,
+                new_image_urls=safe_image_urls,
+                existing_db_state=safe_db_state,
+                recent_chat_history=safe_chat_history,
+            )
+            resolved_output = self._apply_existing_state_defaults(
+                llm_output=llm_output,
+                existing_db_state=safe_db_state,
             )
             missing_information = self._finalize_missing_information(
-                llm_output=llm_output,
-                client_text=normalized_text,
-                image_urls=safe_image_urls,
+                llm_output=resolved_output,
+                current_message=normalized_message,
+                new_image_urls=safe_image_urls,
+                existing_db_state=safe_db_state,
+                recent_chat_history=safe_chat_history,
             )
             return TattooExtractionDraft(
-                tattoo_idea=llm_output.tattoo_idea,
+                tattoo_idea=resolved_output.tattoo_idea,
                 style_tags=normalized_tags,
-                placement=llm_output.placement,
-                size_estimate_cm=llm_output.size_estimate_cm,
-                color_preference=llm_output.color_preference,
+                placement=resolved_output.placement,
+                size_estimate_cm=resolved_output.size_estimate_cm,
+                color_preference=resolved_output.color_preference,
                 missing_information=missing_information,
             )
         except Exception as exc:  # pragma: no cover - defensive branch
             LOGGER.warning("Text extraction fallback used: %s", exc)
             return self._build_fallback_draft(
-                client_text=normalized_text,
+                current_message=normalized_message,
                 style_tags=normalized_tags,
-                image_urls=safe_image_urls,
+                new_image_urls=safe_image_urls,
+                existing_db_state=safe_db_state,
+                recent_chat_history=safe_chat_history,
             )
 
     def _invoke_extraction_llm(
         self,
-        client_text: str,
+        current_message: str,
         style_tags: list[StyleTag],
-        image_urls: list[str],
+        new_image_urls: list[str],
+        existing_db_state: dict[str, Any],
+        recent_chat_history: list[Message],
     ) -> _ExtractionSubset:
         """Call the model and parse strict JSON output for extraction fields."""
         format_instructions = self._parser.get_format_instructions()
         human_prompt = build_extraction_human_prompt(
-            client_text=client_text,
+            current_message=current_message,
             style_tags=style_tags,
-            image_urls=image_urls,
+            new_image_urls=new_image_urls,
+            existing_db_state=existing_db_state,
+            recent_chat_history=recent_chat_history,
             required_items=MISSING_INFORMATION_OPTIONS,
             format_instructions=format_instructions,
         )
@@ -159,24 +179,45 @@ class TattooTextExtractor:
     def _finalize_missing_information(
         self,
         llm_output: _ExtractionSubset,
-        client_text: str,
-        image_urls: list[str],
+        current_message: str,
+        new_image_urls: list[str],
+        existing_db_state: dict[str, Any],
+        recent_chat_history: list[Message],
     ) -> list[MissingInformationItem]:
-        """Apply deterministic checks on top of LLM missing-info output."""
+        """Reconcile missing fields against every supplied context source."""
         missing: set[str] = {
             item for item in llm_output.missing_information if item in _MISSING_SET
         }
 
-        if self._is_blank(llm_output.size_estimate_cm):
-            missing.add("size in cm")
-        if self._is_blank(llm_output.placement):
-            missing.add("placement")
-        if self._is_blank(llm_output.color_preference):
-            missing.add("color preference")
-        if not image_urls:
-            missing.add("reference images")
-        if not self._mentions_preferred_date(client_text):
-            missing.add("preferred date")
+        conversation_text = self._user_conversation_text(
+            current_message=current_message,
+            recent_chat_history=recent_chat_history,
+        )
+        checks: dict[MissingInformationItem, bool] = {
+            "size in cm": self._is_blank(llm_output.size_estimate_cm),
+            "placement": self._is_blank(llm_output.placement),
+            "color preference": self._is_blank(llm_output.color_preference),
+            "reference images": not (
+                new_image_urls
+                or self._has_state_value(
+                    existing_db_state,
+                    ("reference_images", "image_urls", "images", "references"),
+                )
+                or self._mentions_reference_image(conversation_text)
+            ),
+            "preferred date": not (
+                self._has_state_value(
+                    existing_db_state,
+                    ("preferred_date", "appointment_date", "requested_date"),
+                )
+                or self._mentions_preferred_date(conversation_text)
+            ),
+        }
+        for item, is_missing in checks.items():
+            if is_missing:
+                missing.add(item)
+            else:
+                missing.discard(item)
 
         ordered = [
             item for item in MISSING_INFORMATION_OPTIONS if item in missing
@@ -185,31 +226,140 @@ class TattooTextExtractor:
 
     def _build_fallback_draft(
         self,
-        client_text: str,
+        current_message: str,
         style_tags: list[StyleTag],
-        image_urls: list[str],
+        new_image_urls: list[str],
+        existing_db_state: dict[str, Any],
+        recent_chat_history: list[Message],
     ) -> TattooExtractionDraft:
         """Return a safe draft when the extraction call fails."""
         fallback = _ExtractionSubset(
-            tattoo_idea=client_text[:220],
+            tattoo_idea=current_message[:220],
             placement="",
-            size_estimate_cm="",
+            size_estimate_cm=self._extract_size_from_text(current_message),
             color_preference="",
             missing_information=[],
         )
-        missing = self._finalize_missing_information(
+        resolved_fallback = self._apply_existing_state_defaults(
             llm_output=fallback,
-            client_text=client_text,
-            image_urls=image_urls,
+            existing_db_state=existing_db_state,
+        )
+        missing = self._finalize_missing_information(
+            llm_output=resolved_fallback,
+            current_message=current_message,
+            new_image_urls=new_image_urls,
+            existing_db_state=existing_db_state,
+            recent_chat_history=recent_chat_history,
         )
         return TattooExtractionDraft(
-            tattoo_idea=fallback.tattoo_idea,
+            tattoo_idea=resolved_fallback.tattoo_idea,
             style_tags=style_tags,
-            placement=fallback.placement,
-            size_estimate_cm=fallback.size_estimate_cm,
-            color_preference=fallback.color_preference,
+            placement=resolved_fallback.placement,
+            size_estimate_cm=resolved_fallback.size_estimate_cm,
+            color_preference=resolved_fallback.color_preference,
             missing_information=missing,
         )
+
+    def _apply_existing_state_defaults(
+        self,
+        llm_output: _ExtractionSubset,
+        existing_db_state: dict[str, Any],
+    ) -> _ExtractionSubset:
+        """Fill only blank extraction fields from existing database state."""
+        return _ExtractionSubset(
+            tattoo_idea=self._prefer_extracted_value(
+                llm_output.tattoo_idea,
+                existing_db_state,
+                ("tattoo_idea", "idea", "concept"),
+            ),
+            placement=self._prefer_extracted_value(
+                llm_output.placement,
+                existing_db_state,
+                ("placement",),
+            ),
+            size_estimate_cm=self._prefer_extracted_value(
+                llm_output.size_estimate_cm,
+                existing_db_state,
+                ("size_estimate_cm", "size_cm", "size"),
+            ),
+            color_preference=self._prefer_extracted_value(
+                llm_output.color_preference,
+                existing_db_state,
+                ("color_preference", "colour_preference", "color"),
+            ),
+            missing_information=llm_output.missing_information,
+        )
+
+    def _prefer_extracted_value(
+        self,
+        extracted_value: str,
+        existing_db_state: dict[str, Any],
+        state_keys: tuple[str, ...],
+    ) -> str:
+        """Prefer synthesized current context over existing database state."""
+        if not self._is_blank(extracted_value):
+            return extracted_value
+        return self._get_state_text(existing_db_state, state_keys)
+
+    def _get_state_text(
+        self,
+        existing_db_state: dict[str, Any],
+        state_keys: tuple[str, ...],
+    ) -> str:
+        """Return the first non-empty scalar value for known state keys."""
+        for key in state_keys:
+            value = existing_db_state.get(key)
+            if isinstance(value, str) and not self._is_blank(value):
+                return value.strip()
+            if isinstance(value, (int, float)):
+                return str(value)
+        return ""
+
+    def _has_state_value(
+        self,
+        existing_db_state: dict[str, Any],
+        state_keys: tuple[str, ...],
+    ) -> bool:
+        """Return whether database state contains a meaningful value."""
+        for key in state_keys:
+            value = existing_db_state.get(key)
+            if isinstance(value, str) and not self._is_blank(value):
+                return True
+            if isinstance(value, (list, tuple, set, dict)) and value:
+                return True
+            if value is not None and not isinstance(value, (str, list, tuple, set, dict)):
+                return True
+        return False
+
+    def _user_conversation_text(
+        self,
+        current_message: str,
+        recent_chat_history: list[Message],
+    ) -> str:
+        """Combine current and prior user messages for deterministic checks."""
+        user_messages = [
+            message.content
+            for message in recent_chat_history
+            if message.role == "user"
+        ]
+        return " ".join([*user_messages, current_message])
+
+    def _mentions_reference_image(self, text: str) -> bool:
+        """Detect previously supplied reference images in conversation text."""
+        normalized = text.lower()
+        if "http://" in normalized or "https://" in normalized:
+            return True
+        pattern = (
+            r"\b(sent|shared|attached|uploaded)\b.{0,30}"
+            r"\b(image|photo|picture|reference)\b"
+        )
+        return bool(re.search(pattern, normalized))
+
+    def _extract_size_from_text(self, text: str) -> str:
+        """Extract an explicit centimeter size for safe fallback overrides."""
+        pattern = r"\b\d+(?:\.\d+)?\s*(?:cm|centimeters?|centimetres?)\b"
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        return match.group(0).strip() if match else ""
 
     def _is_blank(self, value: str) -> bool:
         """Return True when the extracted field is effectively empty."""
