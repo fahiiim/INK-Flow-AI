@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from typing import Any
+
+from .schemas import Message
 
 VISION_SYSTEM_PROMPT = (
     "You are an expert tattoo artist and style analyst. "
@@ -16,7 +19,15 @@ VISION_SYSTEM_PROMPT = (
 
 EXTRACTION_SYSTEM_PROMPT = (
     "You are a tattoo studio intake analyst. "
-    "Analyze client_text together with style_tags from vision analysis. "
+    "Synthesize current_message with recent_chat_history to resolve context, "
+    "references, and changes across the conversation. "
+    "Use existing_db_state as previously collected information. "
+    "The current_message is authoritative and MUST override any conflicting "
+    "value in recent_chat_history or existing_db_state. "
+    "If current_message does not mention a field, preserve a known value from "
+    "recent_chat_history or existing_db_state. "
+    "Only add an item to missing_information after checking current_message, "
+    "recent_chat_history, and existing_db_state and confirming it is absent. "
     "Extract tattoo idea, placement, size estimate in cm, and color preference. "
     "Return strictly valid JSON and do not include markdown or extra text."
 )
@@ -30,26 +41,85 @@ ROUTING_SYSTEM_PROMPT = (
 
 
 def build_extraction_human_prompt(
-    client_text: str,
+    *,
+    current_message: str | None = None,
     style_tags: Sequence[str],
-    image_urls: Sequence[str],
+    new_image_urls: Sequence[str] | None = None,
+    existing_db_state: Mapping[str, Any] | None = None,
+    recent_chat_history: Sequence[Message] = (),
     required_items: Sequence[str],
     format_instructions: str,
+    client_text: str | None = None,
+    image_urls: Sequence[str] | None = None,
 ) -> str:
-    """Build the dynamic extraction prompt from validated input values."""
+    """Build a hybrid-context extraction prompt from validated values.
+
+    The legacy client_text and image_urls keywords remain temporarily supported
+    during the staged migration. Canonical context always takes precedence.
+    """
+    resolved_message = _resolve_current_message(
+        current_message=current_message,
+        client_text=client_text,
+    )
+    resolved_image_urls = _resolve_new_image_urls(
+        new_image_urls=new_image_urls,
+        image_urls=image_urls,
+    )
+    context_payload = {
+        "existing_db_state": dict(existing_db_state or {}),
+        "recent_chat_history": [
+            message.model_dump(mode="json")
+            for message in recent_chat_history
+        ],
+        "current_message": resolved_message,
+        "new_image_urls": resolved_image_urls,
+        "detected_style_tags": list(style_tags),
+    }
+    serialized_context = json.dumps(
+        context_payload,
+        ensure_ascii=True,
+        indent=2,
+        default=str,
+    )
+
     return (
-        "Client text:\n"
-        f"{client_text}\n\n"
-        "Detected style tags:\n"
-        f"{json.dumps(list(style_tags))}\n\n"
-        "Reference image URLs provided:\n"
-        f"{json.dumps(list(image_urls))}\n\n"
+        "Resolve conflicts using this source precedence:\n"
+        "1. current_message\n"
+        "2. recent_chat_history\n"
+        "3. existing_db_state\n\n"
+        "Hybrid context payload:\n"
+        f"{serialized_context}\n\n"
         "Required missing-information checklist:\n"
         f"{json.dumps(list(required_items))}\n\n"
-        "Identify missing_information using checklist values exactly.\n"
+        "Use checklist values exactly, but flag an item only when it remains "
+        "missing across every context source.\n"
         "Return JSON only and follow this schema:\n"
         f"{format_instructions}"
     )
+
+
+def _resolve_current_message(
+    current_message: str | None,
+    client_text: str | None,
+) -> str:
+    """Resolve canonical and legacy message inputs with canonical priority."""
+    selected_message = current_message
+    if selected_message is None:
+        selected_message = client_text
+    if selected_message is None or not selected_message.strip():
+        raise ValueError("current_message must not be empty.")
+    return selected_message.strip()
+
+
+def _resolve_new_image_urls(
+    new_image_urls: Sequence[str] | None,
+    image_urls: Sequence[str] | None,
+) -> list[str]:
+    """Resolve canonical and legacy image inputs with canonical priority."""
+    selected_urls = new_image_urls
+    if selected_urls is None:
+        selected_urls = image_urls or ()
+    return [url.strip() for url in selected_urls if url and url.strip()]
 
 
 def build_routing_human_prompt(
