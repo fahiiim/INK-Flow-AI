@@ -6,6 +6,15 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ai_brain.schemas import AIExtractionOutput, TattooInquiryInput
+
+__all__ = [
+    "AIExtractionOutput",
+    "ErrorResponse",
+    "HealthResponse",
+    "TattooInquiryInput",
+]
+
 
 class HealthResponse(BaseModel):
     """Service health or readiness response."""
