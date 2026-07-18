@@ -10,11 +10,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from ai_brain.config import get_settings
 from ai_brain.errors import AnalysisPipelineError, ConfigurationError
 from ai_brain.processor import StudioAIBrain
-from ai_brain.schemas import AIExtractionOutput, TattooInquiryInput
 
 from .constants import SERVICE_NAME, SERVICE_VERSION
 from .dependencies import get_ai_brain
-from .schemas import ErrorResponse, HealthResponse
+from .schemas import (
+    AIExtractionOutput,
+    ErrorResponse,
+    HealthResponse,
+    TattooInquiryInput,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -92,11 +96,13 @@ def analyze_inquiry(
     payload: TattooInquiryInput,
     brain: BrainDependency,
 ) -> AIExtractionOutput:
-    """Analyze text and images through the unified AI Brain pipeline."""
+    """Forward validated hybrid context to the unified AI Brain."""
     try:
         return brain.process_inquiry(
-            text=payload.client_text,
-            image_urls=payload.image_urls,
+            current_message=payload.current_message,
+            new_image_urls=payload.new_image_urls,
+            existing_db_state=payload.existing_db_state,
+            recent_chat_history=payload.recent_chat_history,
         )
     except AnalysisPipelineError as exc:
         raise HTTPException(
