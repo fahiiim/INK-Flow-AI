@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+)
 
 STYLE_TAG_OPTIONS: tuple[str, ...] = (
     "fine-line",
@@ -53,25 +59,60 @@ MissingInformationItem = Literal[
 ]
 
 
-class TattooInquiryInput(BaseModel):
-    """Raw inquiry payload received from backend channels."""
+class Message(BaseModel):
+    """Single recent conversation message supplied by the backend."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    client_text: str = Field(
-        min_length=1,
-        description="Client message text exactly as received.",
+    role: Literal["user", "assistant"] = Field(
+        description="Conversation participant that produced the message.",
     )
-    image_urls: list[str] = Field(
-        default_factory=list,
-        description="Reference image URLs attached to the inquiry.",
+    content: str = Field(
+        min_length=1,
+        description="Message text used to resolve conversational context.",
     )
 
-    @field_validator("image_urls")
+
+class TattooInquiryInput(BaseModel):
+    """Hybrid-context inquiry payload assembled by the backend."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    current_message: str = Field(
+        min_length=1,
+        validation_alias=AliasChoices("current_message", "client_text"),
+        description="Latest client message, which overrides conflicting state.",
+    )
+    new_image_urls: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("new_image_urls", "image_urls"),
+        description="Image URLs attached only to the latest client message.",
+    )
+    existing_db_state: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Previously collected inquiry data supplied by the backend.",
+    )
+    recent_chat_history: list[Message] = Field(
+        default_factory=list,
+        max_length=7,
+        description="Up to seven recent messages used for context resolution.",
+    )
+
+    @field_validator("new_image_urls")
     @classmethod
     def normalize_image_urls(cls, value: list[str]) -> list[str]:
         """Drop empty URL items and trim surrounding whitespace."""
         return [item.strip() for item in value if item and item.strip()]
+
+    @property
+    def client_text(self) -> str:
+        """Return the legacy text attribute during the staged migration."""
+        return self.current_message
+
+    @property
+    def image_urls(self) -> list[str]:
+        """Return the legacy image attribute during the staged migration."""
+        return self.new_image_urls
 
 
 class TattooExtractionDraft(BaseModel):
