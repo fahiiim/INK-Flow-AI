@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from pydantic import (
-    AliasChoices,
     BaseModel,
     ConfigDict,
     Field,
@@ -80,12 +79,10 @@ class TattooInquiryInput(BaseModel):
 
     current_message: str = Field(
         min_length=1,
-        validation_alias=AliasChoices("current_message", "client_text"),
         description="Latest client message, which overrides conflicting state.",
     )
     new_image_urls: list[str] = Field(
         default_factory=list,
-        validation_alias=AliasChoices("new_image_urls", "image_urls"),
         description="Image URLs attached only to the latest client message.",
     )
     existing_db_state: dict[str, Any] = Field(
@@ -111,16 +108,6 @@ class TattooInquiryInput(BaseModel):
         if isinstance(value, (list, tuple)):
             return list(value[-7:])
         return value
-
-    @property
-    def client_text(self) -> str:
-        """Return the legacy text attribute during the staged migration."""
-        return self.current_message
-
-    @property
-    def image_urls(self) -> list[str]:
-        """Return the legacy image attribute during the staged migration."""
-        return self.new_image_urls
 
 
 class TattooExtractionDraft(BaseModel):
@@ -163,7 +150,7 @@ class AIExtractionOutput(BaseModel):
         description="Short summary of the tattoo request from the client.",
     )
     style_tags: list[StyleTag] = Field(
-        default_factory=list,
+        min_length=1,
         description="Detected style tags from the approved style taxonomy.",
     )
     placement: str = Field(
