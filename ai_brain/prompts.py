@@ -35,8 +35,9 @@ EXTRACTION_SYSTEM_PROMPT = (
 ROUTING_SYSTEM_PROMPT = (
     "You are a tattoo studio operations assistant. "
     "You will receive a rule-based artist suggestion and risk level. "
-    "Do not change those values. Return valid JSON only with "
-    "confidence_level, ai_reasoning, and draft_reply."
+    "Use the latest message and recent chat only to explain the decision. "
+    "Do not change the fixed artist or risk values. "
+    "Return valid JSON only with confidence_level and ai_reasoning."
 )
 
 
@@ -126,20 +127,29 @@ def build_routing_human_prompt(
     extracted_data: Mapping[str, object],
     suggested_artist: str,
     risk_level: str,
+    current_message: str,
+    recent_chat_history: Sequence[Message],
     format_instructions: str,
 ) -> str:
-    """Build the routing prompt using deterministic routing decisions."""
+    """Build an internal reasoning prompt with conversation context."""
     serialized_data = json.dumps(extracted_data, ensure_ascii=True)
+    serialized_history = json.dumps(
+        [message.model_dump(mode="json") for message in recent_chat_history],
+        ensure_ascii=True,
+    )
     return (
         "Use these fixed values exactly:\n"
         f"suggested_artist: {suggested_artist}\n"
         f"risk_level: {risk_level}\n\n"
+        "Latest client message:\n"
+        f"{current_message}\n\n"
+        "Recent chat history:\n"
+        f"{serialized_history}\n\n"
         "Extracted data:\n"
         f"{serialized_data}\n\n"
         "Return valid JSON only with fields:\n"
-        "confidence_level, ai_reasoning, draft_reply.\n"
+        "confidence_level and ai_reasoning.\n"
         "confidence_level must be one of: high, medium, low.\n"
-        "Keep ai_reasoning concise and operational.\n"
-        "Draft reply must be polite and actionable.\n\n"
+        "Keep ai_reasoning concise and operational.\n\n"
         f"{format_instructions}"
     )
