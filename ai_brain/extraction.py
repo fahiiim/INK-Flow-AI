@@ -27,6 +27,22 @@ LOGGER = logging.getLogger(__name__)
 
 _STYLE_TAG_SET = set(STYLE_TAG_OPTIONS)
 _MISSING_SET = set(MISSING_INFORMATION_OPTIONS)
+_DATE_MENTION_PATTERN = re.compile(
+    r"\b(?:"
+    r"\d{4}-\d{1,2}-\d{1,2}|"
+    r"\d{1,2}[/\-]\d{1,2}(?:[/\-]\d{2,4})?|"
+    r"todaye?|tomorrow|tonight|this morning|this afternoon|this evening|"
+    r"next week|next month|"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
+    r"january|february|march|april|may|june|july|august|september|"
+    r"october|november|december"
+    r")\b",
+    flags=re.IGNORECASE,
+)
+_TIME_MENTION_PATTERN = re.compile(
+    r"\b(?:at\s+)?\d{1,2}(?::[0-5]\d)?\s*(?:am|pm)\b",
+    flags=re.IGNORECASE,
+)
 
 
 class _ExtractionSubset(BaseModel):
@@ -368,11 +384,7 @@ class TattooTextExtractor:
 
     def _mentions_preferred_date(self, text: str) -> bool:
         """Heuristic date mention detector for intake completeness checks."""
-        normalized = text.lower()
-        pattern = (
-            r"\b(\d{1,2}[/\-]\d{1,2}([/\-]\d{2,4})?|"
-            r"monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
-            r"next week|next month|january|february|march|april|may|june|"
-            r"july|august|september|october|november|december)\b"
+        return bool(
+            _DATE_MENTION_PATTERN.search(text)
+            or _TIME_MENTION_PATTERN.search(text)
         )
-        return bool(re.search(pattern, normalized))
