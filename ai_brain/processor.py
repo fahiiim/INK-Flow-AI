@@ -70,7 +70,11 @@ class StudioAIBrain:
             existing_db_state=inquiry.existing_db_state,
             recent_chat_history=inquiry.recent_chat_history,
         )
-        return self.router.route(extracted)
+        return self.router.route(
+            extracted,
+            current_message=inquiry.current_message,
+            recent_chat_history=inquiry.recent_chat_history,
+        )
 
     def process_studio_decision(
         self,
