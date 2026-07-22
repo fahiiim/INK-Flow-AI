@@ -59,12 +59,15 @@ def test_router_fallback_handles_incomplete_high_risk_request() -> None:
         ],
     )
 
-    result = _router_with_failing_llm().route(draft)
+    result = _router_with_failing_llm().route(
+        draft,
+        current_message="I need complex design advice and a price quote.",
+    )
 
     assert result.risk_level == "high"
     assert result.suggested_artist == "Unclear"
     assert result.confidence_level == "low"
-    assert "senior studio review" in result.draft_reply
+    assert "studio team review" in result.draft_reply
 
 
 def test_router_keeps_basic_missing_information_low_risk() -> None:
@@ -84,6 +87,7 @@ def test_router_keeps_basic_missing_information_low_risk() -> None:
     assert result.suggested_artist == "Nina"
     assert result.confidence_level == "high"
     assert "size in cm" in result.draft_reply
+    assert result.draft_reply.count("?") == 2
 
 
 def test_chat_model_forces_zero_temperature(
