@@ -104,6 +104,14 @@ class TattooInquiryInput(BaseModel):
         """Drop empty URL items and trim surrounding whitespace."""
         return [item.strip() for item in value if item and item.strip()]
 
+    @field_validator("recent_chat_history", mode="before")
+    @classmethod
+    def keep_latest_chat_history(cls, value: Any) -> Any:
+        """Keep only the latest seven raw messages before validation."""
+        if isinstance(value, (list, tuple)):
+            return list(value[-7:])
+        return value
+
     @property
     def client_text(self) -> str:
         """Return the legacy text attribute during the staged migration."""
