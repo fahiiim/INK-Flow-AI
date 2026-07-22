@@ -56,7 +56,12 @@ class StaticTextExtractor:
 class StaticRouter:
     """Return the existing client-facing analysis contract."""
 
-    def route(self, extracted: TattooExtractionDraft) -> AIExtractionOutput:
+    def route(
+        self,
+        extracted: TattooExtractionDraft,
+        current_message: str = "",
+        recent_chat_history: list[Message] | None = None,
+    ) -> AIExtractionOutput:
         """Return a deterministic legacy routing result."""
         return _analysis()
 
