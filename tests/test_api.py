@@ -157,6 +157,41 @@ def test_analyze_endpoint_returns_strict_output() -> None:
     ]
 
 
+def test_analyze_endpoint_keeps_latest_seven_history_messages() -> None:
+    """Oversized histories are normalized before endpoint processing."""
+    brain = StubAIBrain(result=_successful_output())
+    history = [
+        {
+            "role": "user",
+            "content": f"message {index}",
+        }
+        for index in range(10)
+    ]
+
+    with _client_with_brain(brain) as client:
+        response = client.post(
+            "/api/v1/inquiries/analyze",
+            json={
+                "current_message": "hi",
+                "new_image_urls": [],
+                "existing_db_state": {
+                    "lead_id": 3,
+                    "lead_name": "Samim Osman",
+                },
+                "recent_chat_history": history,
+            },
+        )
+
+    assert response.status_code == 200
+    forwarded_history = brain.calls[0]["recent_chat_history"]
+    assert isinstance(forwarded_history, list)
+    assert len(forwarded_history) == 7
+    assert all(isinstance(message, Message) for message in forwarded_history)
+    assert [message.content for message in forwarded_history] == [
+        f"message {index}" for index in range(3, 10)
+    ]
+
+
 def test_analyze_endpoint_rejects_invalid_payload() -> None:
     """FastAPI rejects an empty current message before invoking AI."""
     brain = StubAIBrain(result=_successful_output())
