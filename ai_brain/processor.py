@@ -6,6 +6,14 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from .decision import StudioDecisionEngine
+from .decision_schemas import (
+    DecisionHistoryExample,
+    StudioDecisionContext,
+    StudioDecisionFeedback,
+    StudioDecisionOutput,
+    StudioLearningRecord,
+)
 from .errors import AnalysisPipelineError
 from .extraction import TattooTextExtractor
 from .routing import TattooRouter
@@ -21,10 +29,12 @@ class StudioAIBrain:
         vision_analyzer: TattooVisionAnalyzer | None = None,
         text_extractor: TattooTextExtractor | None = None,
         router: TattooRouter | None = None,
+        decision_engine: StudioDecisionEngine | None = None,
     ) -> None:
         self.vision_analyzer = vision_analyzer or TattooVisionAnalyzer()
         self.text_extractor = text_extractor or TattooTextExtractor()
         self.router = router or TattooRouter()
+        self.decision_engine = decision_engine or StudioDecisionEngine()
 
     def process_inquiry(
         self,
@@ -61,6 +71,50 @@ class StudioAIBrain:
             recent_chat_history=inquiry.recent_chat_history,
         )
         return self.router.route(extracted)
+
+    def process_studio_decision(
+        self,
+        inquiry: TattooInquiryInput,
+        context: StudioDecisionContext,
+    ) -> StudioDecisionOutput:
+        """Create an internal decision from caller-supplied studio context."""
+        analysis = self.process_inquiry(
+            current_message=inquiry.current_message,
+            new_image_urls=inquiry.new_image_urls,
+            existing_db_state=inquiry.existing_db_state,
+            recent_chat_history=inquiry.recent_chat_history,
+        )
+        return self.decision_engine.decide(
+            analysis=analysis,
+            current_message=inquiry.current_message,
+            context=context,
+        )
+
+    def build_learning_record(
+        self,
+        inquiry: TattooInquiryInput,
+        context: StudioDecisionContext,
+        decision: StudioDecisionOutput,
+        feedback: StudioDecisionFeedback,
+    ) -> StudioLearningRecord:
+        """Build a feedback record without storing or transmitting it."""
+        return self.decision_engine.build_learning_record(
+            inquiry=inquiry,
+            context=context,
+            decision=decision,
+            feedback=feedback,
+        )
+
+    def build_history_example(
+        self,
+        record: StudioLearningRecord,
+        example_id: str,
+    ) -> DecisionHistoryExample:
+        """Convert a completed record into future decision evidence."""
+        return self.decision_engine.build_history_example(
+            record=record,
+            example_id=example_id,
+        )
 
     def _build_inquiry(
         self,
