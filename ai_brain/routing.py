@@ -27,7 +27,13 @@ LOGGER = logging.getLogger(__name__)
 
 _NINA_STYLE_TAGS = {"fine-line", "minimal", "micro-realism"}
 _HOSS_STYLE_TAGS = {"watercolor", "traditional"}
-_BASIC_LOW_RISK_MISSING = {"size in cm", "placement"}
+_ALL_STANDARD_INTAKE_MISSING = {
+    "size in cm",
+    "placement",
+    "reference images",
+    "color preference",
+    "preferred date",
+}
 
 _HIGH_RISK_TERMS = (
     "price",
@@ -152,13 +158,16 @@ class TattooRouter:
             ]
         )
 
+        # High-risk intent always takes precedence over intake completeness.
         if any(term in searchable for term in _HIGH_RISK_TERMS):
             return "high"
 
+        # Standard missing intake fields are safe for conversational follow-up.
         missing = set(extracted.missing_information)
-        if not missing or missing.issubset(_BASIC_LOW_RISK_MISSING):
+        if missing.issubset(_ALL_STANDARD_INTAKE_MISSING):
             return "low"
 
+        # Fail closed if a future anomalous missing value bypasses validation.
         return "high"
 
     def _generate_reasoning_and_reply(
