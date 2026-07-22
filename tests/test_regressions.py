@@ -42,10 +42,10 @@ def _router_with_failing_llm() -> TattooRouter:
     return TattooRouter(llm=llm)
 
 
-def test_router_fallback_handles_incomplete_high_risk_request() -> None:
-    """Fallback stays valid and escalates broadly incomplete intake."""
+def test_router_flags_high_risk_keywords_before_missing_information() -> None:
+    """Sensitive intent remains high risk despite standard missing fields."""
     draft = TattooExtractionDraft(
-        tattoo_idea="A tattoo idea without intake details",
+        tattoo_idea="Client requests a price quote and complex design advice",
         style_tags=["unknown"],
         placement="",
         size_estimate_cm="",
@@ -68,6 +68,33 @@ def test_router_fallback_handles_incomplete_high_risk_request() -> None:
     assert result.suggested_artist == "Unclear"
     assert result.confidence_level == "low"
     assert "studio team review" in result.draft_reply
+
+
+def test_router_keeps_all_standard_missing_information_low_risk() -> None:
+    """The complete standard intake checklist is safe for auto-reply."""
+    draft = TattooExtractionDraft(
+        tattoo_idea="A tattoo idea without intake details",
+        style_tags=["unknown"],
+        placement="",
+        size_estimate_cm="",
+        color_preference="",
+        missing_information=[
+            "size in cm",
+            "placement",
+            "reference images",
+            "color preference",
+            "preferred date",
+        ],
+    )
+
+    result = _router_with_failing_llm().route(
+        draft,
+        current_message="I want to discuss a tattoo idea.",
+    )
+
+    assert result.risk_level == "low"
+    assert "studio team review" not in result.draft_reply
+    assert result.draft_reply.count("?") == 2
 
 
 def test_router_keeps_basic_missing_information_low_risk() -> None:
