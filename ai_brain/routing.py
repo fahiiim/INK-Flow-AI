@@ -13,9 +13,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .llm import get_chat_model
 from .prompts import ROUTING_SYSTEM_PROMPT, build_routing_human_prompt
+from .reply import ConversationReplyComposer
 from .schemas import (
     AIExtractionOutput,
     ConfidenceLevel,
+    Message,
     RiskLevel,
     SuggestedArtist,
     TattooExtractionDraft,
@@ -52,9 +54,6 @@ class _RoutingLLMOutput(BaseModel):
     ai_reasoning: str = Field(
         description="Brief explanation for routing and risk decisions.",
     )
-    draft_reply: str = Field(
-        description="Polite client-facing response draft.",
-    )
 
 
 class TattooRouter:
@@ -64,12 +63,19 @@ class TattooRouter:
         self,
         llm: ChatOpenAI | None = None,
         model_name: str = "gpt-4o",
+        reply_composer: ConversationReplyComposer | None = None,
     ) -> None:
         self._llm = llm or get_chat_model(model_name=model_name)
         self._parser = JsonOutputParser(pydantic_object=_RoutingLLMOutput)
+        self._reply_composer = reply_composer or ConversationReplyComposer()
 
-    def route(self, extracted: TattooExtractionDraft) -> AIExtractionOutput:
-        """Create final AIExtractionOutput from extracted intake information."""
+    def route(
+        self,
+        extracted: TattooExtractionDraft,
+        current_message: str = "",
+        recent_chat_history: list[Message] | None = None,
+    ) -> AIExtractionOutput:
+        """Create final output with a concise conversational reply."""
         suggested_artist = self._suggest_artist(
             style_tags=extracted.style_tags,
             size_estimate_cm=extracted.size_estimate_cm,
@@ -78,6 +84,14 @@ class TattooRouter:
         llm_output = self._generate_reasoning_and_reply(
             extracted=extracted,
             suggested_artist=suggested_artist,
+            risk_level=risk_level,
+            current_message=current_message,
+            recent_chat_history=recent_chat_history or [],
+        )
+        draft_reply = self._reply_composer.compose(
+            extracted=extracted,
+            current_message=current_message,
+            recent_chat_history=recent_chat_history,
             risk_level=risk_level,
         )
 
@@ -92,7 +106,7 @@ class TattooRouter:
             ai_reasoning=llm_output.ai_reasoning,
             missing_information=extracted.missing_information,
             risk_level=risk_level,
-            draft_reply=llm_output.draft_reply,
+            draft_reply=draft_reply,
         )
 
     def _suggest_artist(
@@ -152,14 +166,18 @@ class TattooRouter:
         extracted: TattooExtractionDraft,
         suggested_artist: SuggestedArtist,
         risk_level: RiskLevel,
+        current_message: str,
+        recent_chat_history: list[Message],
     ) -> _RoutingLLMOutput:
-        """Generate human-readable reasoning and draft reply in one LLM call."""
+        """Generate internal reasoning without client-facing prose."""
         try:
             format_instructions = self._parser.get_format_instructions()
             human_prompt = build_routing_human_prompt(
                 extracted_data=extracted.model_dump(),
                 suggested_artist=suggested_artist,
                 risk_level=risk_level,
+                current_message=current_message,
+                recent_chat_history=recent_chat_history,
                 format_instructions=format_instructions,
             )
             response = self._llm.invoke(
@@ -173,14 +191,12 @@ class TattooRouter:
         except Exception as exc:  # pragma: no cover - defensive branch
             LOGGER.warning("Routing LLM fallback used: %s", exc)
             return self._fallback_llm_output(
-                extracted=extracted,
                 suggested_artist=suggested_artist,
                 risk_level=risk_level,
             )
 
     def _fallback_llm_output(
         self,
-        extracted: TattooExtractionDraft,
         suggested_artist: SuggestedArtist,
         risk_level: RiskLevel,
     ) -> _RoutingLLMOutput:
@@ -198,31 +214,9 @@ class TattooRouter:
             "and missing fields for triage."
         )
 
-        if risk_level == "high":
-            draft_reply = (
-                "Thanks for your message. Your request needs a senior studio "
-                "review before we proceed. Our team will follow up shortly with "
-                "next steps and clear guidance."
-            )
-        else:
-            if extracted.missing_information:
-                missing = ", ".join(extracted.missing_information)
-                draft_reply = (
-                    "Thanks for your inquiry. To give you an accurate next step, "
-                    f"please share: {missing}. Once we have that, we can continue "
-                    "with artist matching and scheduling."
-                )
-            else:
-                draft_reply = (
-                    "Thanks for sharing the details. We have enough information "
-                    "to continue and will follow up with artist availability and "
-                    "recommended booking options."
-                )
-
         return _RoutingLLMOutput(
             confidence_level=confidence_level,
             ai_reasoning=ai_reasoning,
-            draft_reply=draft_reply,
         )
 
     def _coerce_content_to_text(self, content: Any) -> str:
