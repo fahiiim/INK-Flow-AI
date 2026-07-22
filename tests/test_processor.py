@@ -54,7 +54,12 @@ class StubRouter:
         self._output = output
         self.calls: list[TattooExtractionDraft] = []
 
-    def route(self, extracted: TattooExtractionDraft) -> AIExtractionOutput:
+    def route(
+        self,
+        extracted: TattooExtractionDraft,
+        current_message: str = "",
+        recent_chat_history: list[Message] | None = None,
+    ) -> AIExtractionOutput:
         """Return pre-defined output and track invocation input."""
         self.calls.append(extracted)
         return self._output
