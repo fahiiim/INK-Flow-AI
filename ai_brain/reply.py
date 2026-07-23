@@ -136,8 +136,8 @@ class ConversationReplyComposer:
                 risk_level=risk_level,
             )
 
-        details = self._known_details(extracted)
-        if not details:
+        summary = self._natural_summary(extracted)
+        if not summary:
             return self.compose(
                 extracted=extracted,
                 current_message=current_message,
@@ -145,14 +145,18 @@ class ConversationReplyComposer:
                 risk_level=risk_level,
             )
 
-        bullet_list = "\n".join(
-            f"- {label}: {value}" for label, value in details
+        questions = self._select_questions(
+            missing_information=extracted.missing_information,
+            history=history,
         )
-        return (
-            "Here's what I've got so far:\n"
-            f"{bullet_list}\n\n"
-            "Please confirm if these details are correct, or let me know if "
-            "you would like to change anything."
+        reply_parts = [
+            summary,
+            "Does that sound right, or would you like to change anything?",
+            *questions,
+        ]
+        return self._avoid_exact_repeat(
+            " ".join(reply_parts),
+            history,
         )
 
     def _is_greeting_only(self, message: str) -> bool:
@@ -190,25 +194,44 @@ class ConversationReplyComposer:
                 confirmed = True
         return confirmed
 
-    def _known_details(
+    def _natural_summary(
         self,
         extracted: TattooExtractionDraft,
-    ) -> list[tuple[str, str]]:
-        """Return non-empty facts in the required validation order."""
+    ) -> str:
+        """Summarize only known details in one conversational sentence."""
         style_tags = [
             tag for tag in extracted.style_tags if tag != "unknown"
         ]
-        candidates = (
-            ("Style", ", ".join(style_tags)),
-            ("Placement", extracted.placement),
-            ("Size", extracted.size_estimate_cm),
-            ("Color", extracted.color_preference),
-        )
-        return [
-            (label, value.strip())
-            for label, value in candidates
-            if value and value.strip()
+        descriptors = [
+            value.strip()
+            for value in (
+                extracted.size_estimate_cm,
+                extracted.color_preference,
+                " and ".join(style_tags),
+            )
+            if self._is_known_reply_value(value)
         ]
+        placement = ""
+        if self._is_known_reply_value(extracted.placement):
+            placement = extracted.placement.strip()
+        if not descriptors and not placement:
+            return ""
+
+        subject = " ".join([*descriptors, "tattoo"])
+        if placement:
+            subject = f"{subject} on your {placement}"
+        return f"Got it, a {subject}."
+
+    def _is_known_reply_value(self, value: str) -> bool:
+        """Reject empty and placeholder values from client-facing summaries."""
+        normalized = value.strip().casefold()
+        return normalized not in {
+            "",
+            "unknown",
+            "none",
+            "n/a",
+            "not provided",
+        }
 
     def _greeting_reply(self, history: list[Message]) -> str:
         """Start naturally without sending the full intake checklist."""
