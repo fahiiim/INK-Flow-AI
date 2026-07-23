@@ -52,13 +52,9 @@ def _reasoning_response() -> str:
 def test_router_accepts_strict_validation_draft_reply() -> None:
     """A valid draft string is returned unchanged to the caller."""
     draft_reply = (
-        "Here are the details:\n"
-        "- Style: fine-line\n"
-        "- Placement: inner wrist\n"
-        "- Size: 5cm\n"
-        "- Color: black-and-grey\n\n"
-        "Please confirm if these details are correct, or let me know if you "
-        "would like to change anything."
+        "Got it, a 5cm black-and-grey fine-line tattoo on your inner wrist. "
+        "Does that sound right, or would you like to change anything? "
+        "What date or time works best for you?"
     )
     fake_llm = SequentialLLM(
         [
@@ -73,6 +69,7 @@ def test_router_accepts_strict_validation_draft_reply() -> None:
         extracted=_complete_draft(),
         current_message="I want a 5cm fine-line lotus on my wrist.",
         recent_chat_history=[],
+        existing_db_state={"lead_name": "Samim"},
     )
 
     assert result.draft_reply == draft_reply
@@ -102,6 +99,7 @@ def test_confirmed_history_is_available_to_draft_prompt() -> None:
         extracted=_complete_draft(),
         current_message="Yes, those details are correct.",
         recent_chat_history=history,
+        existing_db_state={"preferred_date": "not provided"},
     )
 
     assert result.draft_reply == confirmed_reply
@@ -109,6 +107,7 @@ def test_confirmed_history_is_available_to_draft_prompt() -> None:
     human_message = fake_llm.calls[1][1]
     assert isinstance(human_message, HumanMessage)
     assert "Yes, those details are correct." in str(human_message.content)
+    assert '"preferred_date": "not provided"' in str(human_message.content)
 
 
 def test_non_string_draft_reply_uses_validated_fallback() -> None:
@@ -129,5 +128,8 @@ def test_non_string_draft_reply_uses_validated_fallback() -> None:
     )
 
     assert result.draft_reply != "123"
-    assert "- Style: fine-line" in result.draft_reply
-    assert "Please confirm if these details are correct" in result.draft_reply
+    assert "Got it, a 5cm black-and-grey fine-line tattoo" in result.draft_reply
+    assert "Does that sound right" in result.draft_reply
+    assert "- Style:" not in result.draft_reply
+    assert "Unknown" not in result.draft_reply
+    assert result.draft_reply.count("?") <= 2
