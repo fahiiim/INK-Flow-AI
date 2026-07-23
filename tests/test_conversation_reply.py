@@ -85,8 +85,10 @@ def test_date_correction_is_remembered_and_not_requested_again() -> None:
 
     assert "preferred date" not in extracted.missing_information
     assert "date" not in result.draft_reply.casefold()
-    assert "- Placement: back" in result.draft_reply
-    assert "Please confirm if these details are correct" in result.draft_reply
+    assert result.draft_reply.startswith("Got it, a tattoo on your back.")
+    assert "Does that sound right" in result.draft_reply
+    assert "rough size" in result.draft_reply
+    assert "- Placement:" not in result.draft_reply
     assert len(result.draft_reply) < 300
 
 
