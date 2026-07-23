@@ -53,6 +53,7 @@ class StubRouter:
     def __init__(self, output: AIExtractionOutput) -> None:
         self._output = output
         self.calls: list[TattooExtractionDraft] = []
+        self.context_calls: list[tuple[str, list[Message]]] = []
 
     def route(
         self,
@@ -62,6 +63,9 @@ class StubRouter:
     ) -> AIExtractionOutput:
         """Return pre-defined output and track invocation input."""
         self.calls.append(extracted)
+        self.context_calls.append(
+            (current_message, list(recent_chat_history or []))
+        )
         return self._output
 
 
@@ -129,6 +133,13 @@ def test_process_inquiry_low_risk_fine_line_request() -> None:
     }
     assert extraction.calls[0]["recent_chat_history"] == history
     assert len(router.calls) == 1
+    assert router.context_calls == [
+        ("Actually make the fine-line lotus 10cm.", history)
+    ]
+    assert result.draft_reply == (
+        "Thanks for sharing the details. This looks like a great "
+        "fine-line piece for Nina."
+    )
 
 
 def test_process_inquiry_high_risk_pricing_request() -> None:
