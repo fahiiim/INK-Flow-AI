@@ -96,9 +96,11 @@ class TattooRouter:
         extracted: TattooExtractionDraft,
         current_message: str = "",
         recent_chat_history: list[Message] | None = None,
+        existing_db_state: dict[str, Any] | None = None,
     ) -> AIExtractionOutput:
         """Create final output with a concise conversational reply."""
         history = recent_chat_history or []
+        db_state = existing_db_state or {}
         suggested_artist = self._suggest_artist(
             style_tags=extracted.style_tags,
             size_estimate_cm=extracted.size_estimate_cm,
@@ -117,6 +119,7 @@ class TattooRouter:
             recent_chat_history=history,
             suggested_artist=suggested_artist,
             risk_level=risk_level,
+            existing_db_state=db_state,
         )
 
         return AIExtractionOutput(
@@ -140,6 +143,7 @@ class TattooRouter:
         recent_chat_history: list[Message],
         suggested_artist: SuggestedArtist,
         risk_level: RiskLevel,
+        existing_db_state: dict[str, Any],
     ) -> str:
         """Generate and strictly validate a client-facing draft reply."""
         try:
@@ -157,6 +161,7 @@ class TattooRouter:
                 suggested_artist=suggested_artist,
                 risk_level=risk_level,
                 format_instructions=format_instructions,
+                existing_db_state=existing_db_state,
             )
             response = self._llm.invoke(
                 [
