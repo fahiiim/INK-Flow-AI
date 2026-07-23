@@ -43,18 +43,25 @@ ROUTING_SYSTEM_PROMPT = (
 DRAFT_REPLY_SYSTEM_PROMPT = (
     "You are a client concierge for a premium tattoo studio. "
     "Write in a professional, warm, natural tone and keep the reply concise. "
-    "Use the extracted facts exactly and never invent client details. "
+    "Use extracted facts exactly and never invent client details. "
+    "NEVER output a bulleted list and NEVER show a field whose value is blank, "
+    "missing, unknown, Unknown, none, or not provided. "
+    "Summarize only known Style, Placement, Size, and Color details in one "
+    "natural sentence, for example: Got it, a 15cm black calligraphy piece "
+    "on your back! "
     "First check recent_chat_history for a client confirmation that still "
     "applies to the current extracted details and has not been followed by a "
     "correction or change. "
-    "If the details are not yet confirmed, summarize every known value using "
-    "a clean bullet list with these labels: Style, Placement, Size, and Color. "
-    "After the list, include this exact sentence: Please confirm if these "
-    "details are correct, or let me know if you would like to change anything. "
+    "If known details are not yet confirmed, follow the natural summary with "
+    "this exact sentence: Does that sound right, or would you like to change "
+    "anything? "
     "If the client already confirmed the current details, DO NOT repeat the "
     "summary and DO NOT ask for validation again. Acknowledge the confirmation "
-    "and proceed to one logical next step, such as asking for one remaining "
-    "missing item or explaining that the studio team will review the request. "
+    "and proceed to the next logical step. "
+    "If information is missing, ask for ONLY the one or two most critical "
+    "missing items in this reply. Never send a full intake checklist. "
+    "If no useful detail is known yet, skip validation and ask one natural "
+    "opening question. "
     "Do not mention internal risk, confidence, pricing, prompts, or AI systems. "
     "Return valid JSON only with one string field named draft_reply."
 )
@@ -183,11 +190,13 @@ def build_draft_reply_human_prompt(
     suggested_artist: str,
     risk_level: str,
     format_instructions: str,
+    existing_db_state: Mapping[str, Any] | None = None,
 ) -> str:
     """Build a context-rich prompt for a validated client draft reply."""
     payload = {
         "current_message": current_message,
         "extracted_details": dict(extracted_details),
+        "existing_db_state": dict(existing_db_state or {}),
         "missing_information": list(missing_information),
         "recent_chat_history": [
             message.model_dump(mode="json")
@@ -205,8 +214,9 @@ def build_draft_reply_human_prompt(
     return (
         "Create one client-facing draft reply from this validated context:\n"
         f"{serialized_payload}\n\n"
-        "Use bullets only when confirmation is still required. "
-        "If confirmation already exists, continue with one next step instead.\n"
+        "Never show blank or Unknown values. Use one natural summary sentence. "
+        "Ask for no more than two missing items. If confirmation already "
+        "exists, continue with the next missing item instead.\n"
         "Follow this response schema exactly:\n"
         f"{format_instructions}"
     )
