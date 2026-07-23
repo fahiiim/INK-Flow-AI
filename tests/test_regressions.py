@@ -113,8 +113,9 @@ def test_router_keeps_basic_missing_information_low_risk() -> None:
     assert result.risk_level == "low"
     assert result.suggested_artist == "Nina"
     assert result.confidence_level == "high"
-    assert "size in cm" in result.draft_reply
-    assert result.draft_reply.count("?") == 2
+    assert "- Style: minimal, floral" in result.draft_reply
+    assert "- Color: black-and-grey" in result.draft_reply
+    assert "Please confirm if these details are correct" in result.draft_reply
 
 
 def test_chat_model_forces_zero_temperature(
