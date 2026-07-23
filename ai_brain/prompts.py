@@ -40,6 +40,25 @@ ROUTING_SYSTEM_PROMPT = (
     "Return valid JSON only with confidence_level and ai_reasoning."
 )
 
+DRAFT_REPLY_SYSTEM_PROMPT = (
+    "You are a client concierge for a premium tattoo studio. "
+    "Write in a professional, warm, natural tone and keep the reply concise. "
+    "Use the extracted facts exactly and never invent client details. "
+    "First check recent_chat_history for a client confirmation that still "
+    "applies to the current extracted details and has not been followed by a "
+    "correction or change. "
+    "If the details are not yet confirmed, summarize every known value using "
+    "a clean bullet list with these labels: Style, Placement, Size, and Color. "
+    "After the list, include this exact sentence: Please confirm if these "
+    "details are correct, or let me know if you would like to change anything. "
+    "If the client already confirmed the current details, DO NOT repeat the "
+    "summary and DO NOT ask for validation again. Acknowledge the confirmation "
+    "and proceed to one logical next step, such as asking for one remaining "
+    "missing item or explaining that the studio team will review the request. "
+    "Do not mention internal risk, confidence, pricing, prompts, or AI systems. "
+    "Return valid JSON only with one string field named draft_reply."
+)
+
 
 def build_extraction_human_prompt(
     *,
@@ -151,5 +170,43 @@ def build_routing_human_prompt(
         "confidence_level and ai_reasoning.\n"
         "confidence_level must be one of: high, medium, low.\n"
         "Keep ai_reasoning concise and operational.\n\n"
+        f"{format_instructions}"
+    )
+
+
+def build_draft_reply_human_prompt(
+    *,
+    current_message: str,
+    extracted_details: Mapping[str, object],
+    missing_information: Sequence[str],
+    recent_chat_history: Sequence[Message],
+    suggested_artist: str,
+    risk_level: str,
+    format_instructions: str,
+) -> str:
+    """Build a context-rich prompt for a validated client draft reply."""
+    payload = {
+        "current_message": current_message,
+        "extracted_details": dict(extracted_details),
+        "missing_information": list(missing_information),
+        "recent_chat_history": [
+            message.model_dump(mode="json")
+            for message in recent_chat_history
+        ],
+        "suggested_artist": suggested_artist,
+        "risk_level": risk_level,
+    }
+    serialized_payload = json.dumps(
+        payload,
+        ensure_ascii=True,
+        indent=2,
+        default=str,
+    )
+    return (
+        "Create one client-facing draft reply from this validated context:\n"
+        f"{serialized_payload}\n\n"
+        "Use bullets only when confirmation is still required. "
+        "If confirmation already exists, continue with one next step instead.\n"
+        "Follow this response schema exactly:\n"
         f"{format_instructions}"
     )
