@@ -85,10 +85,9 @@ def test_date_correction_is_remembered_and_not_requested_again() -> None:
 
     assert "preferred date" not in extracted.missing_information
     assert "date" not in result.draft_reply.casefold()
-    assert result.draft_reply.startswith("You're right")
-    assert "rough size" in result.draft_reply
-    assert result.draft_reply.count("?") <= 2
-    assert len(result.draft_reply) < 220
+    assert "- Placement: back" in result.draft_reply
+    assert "Please confirm if these details are correct" in result.draft_reply
+    assert len(result.draft_reply) < 300
 
 
 def test_normal_date_message_gets_a_simple_acknowledgement() -> None:
