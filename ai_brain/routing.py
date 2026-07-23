@@ -9,10 +9,15 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictStr
 
 from .llm import get_chat_model
-from .prompts import ROUTING_SYSTEM_PROMPT, build_routing_human_prompt
+from .prompts import (
+    DRAFT_REPLY_SYSTEM_PROMPT,
+    ROUTING_SYSTEM_PROMPT,
+    build_draft_reply_human_prompt,
+    build_routing_human_prompt,
+)
 from .reply import ConversationReplyComposer
 from .schemas import (
     AIExtractionOutput,
@@ -62,6 +67,14 @@ class _RoutingLLMOutput(BaseModel):
     )
 
 
+class _DraftReplyLLMOutput(BaseModel):
+    """Strict client-facing reply returned by the language model."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    draft_reply: StrictStr = Field(min_length=1, max_length=2000)
+
+
 class TattooRouter:
     """Apply routing and risk rules, then craft a staff-ready draft reply."""
 
@@ -73,6 +86,9 @@ class TattooRouter:
     ) -> None:
         self._llm = llm or get_chat_model(model_name=model_name)
         self._parser = JsonOutputParser(pydantic_object=_RoutingLLMOutput)
+        self._draft_parser = JsonOutputParser(
+            pydantic_object=_DraftReplyLLMOutput
+        )
         self._reply_composer = reply_composer or ConversationReplyComposer()
 
     def route(
@@ -82,6 +98,7 @@ class TattooRouter:
         recent_chat_history: list[Message] | None = None,
     ) -> AIExtractionOutput:
         """Create final output with a concise conversational reply."""
+        history = recent_chat_history or []
         suggested_artist = self._suggest_artist(
             style_tags=extracted.style_tags,
             size_estimate_cm=extracted.size_estimate_cm,
@@ -92,12 +109,13 @@ class TattooRouter:
             suggested_artist=suggested_artist,
             risk_level=risk_level,
             current_message=current_message,
-            recent_chat_history=recent_chat_history or [],
+            recent_chat_history=history,
         )
-        draft_reply = self._reply_composer.compose(
+        draft_reply = self._generate_draft_reply(
             extracted=extracted,
             current_message=current_message,
-            recent_chat_history=recent_chat_history,
+            recent_chat_history=history,
+            suggested_artist=suggested_artist,
             risk_level=risk_level,
         )
 
@@ -114,6 +132,51 @@ class TattooRouter:
             risk_level=risk_level,
             draft_reply=draft_reply,
         )
+
+    def _generate_draft_reply(
+        self,
+        extracted: TattooExtractionDraft,
+        current_message: str,
+        recent_chat_history: list[Message],
+        suggested_artist: SuggestedArtist,
+        risk_level: RiskLevel,
+    ) -> str:
+        """Generate and strictly validate a client-facing draft reply."""
+        try:
+            format_instructions = self._draft_parser.get_format_instructions()
+            human_prompt = build_draft_reply_human_prompt(
+                current_message=current_message,
+                extracted_details={
+                    "style": list(extracted.style_tags),
+                    "placement": extracted.placement,
+                    "size": extracted.size_estimate_cm,
+                    "color": extracted.color_preference,
+                },
+                missing_information=extracted.missing_information,
+                recent_chat_history=recent_chat_history,
+                suggested_artist=suggested_artist,
+                risk_level=risk_level,
+                format_instructions=format_instructions,
+            )
+            response = self._llm.invoke(
+                [
+                    SystemMessage(content=DRAFT_REPLY_SYSTEM_PROMPT),
+                    HumanMessage(content=human_prompt),
+                ]
+            )
+            parsed = self._draft_parser.parse(
+                self._coerce_content_to_text(response.content)
+            )
+            output = _DraftReplyLLMOutput.model_validate(parsed)
+            return output.draft_reply.strip()
+        except Exception as exc:  # pragma: no cover - defensive branch
+            LOGGER.warning("Draft reply LLM fallback used: %s", exc)
+            return self._reply_composer.compose_validation(
+                extracted=extracted,
+                current_message=current_message,
+                recent_chat_history=recent_chat_history,
+                risk_level=risk_level,
+            )
 
     def _suggest_artist(
         self,
