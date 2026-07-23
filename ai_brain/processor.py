@@ -74,6 +74,7 @@ class StudioAIBrain:
             extracted,
             current_message=inquiry.current_message,
             recent_chat_history=inquiry.recent_chat_history,
+            existing_db_state=inquiry.existing_db_state,
         )
 
     def process_studio_decision(
