@@ -18,6 +18,15 @@ _CORRECTION_TERMS = (
     "i meant",
     "i told you",
 )
+_CONFIRMATION_PATTERN = re.compile(
+    r"\b(?:yes|correct|confirmed|all good|looks good|that's right|"
+    r"that is right|details are right)\b",
+    flags=re.IGNORECASE,
+)
+_CHANGE_PATTERN = re.compile(
+    r"\b(?:change|make it|instead|different|update)\b",
+    flags=re.IGNORECASE,
+)
 _SCHEDULE_TERMS = (
     "today",
     "tomorrow",
@@ -103,6 +112,49 @@ class ConversationReplyComposer:
         )
         return self._avoid_exact_repeat(reply, history)
 
+    def compose_validation(
+        self,
+        extracted: TattooExtractionDraft,
+        current_message: str,
+        recent_chat_history: list[Message] | None,
+        risk_level: RiskLevel,
+    ) -> str:
+        """Summarize extracted facts once, unless already confirmed."""
+        history = recent_chat_history or []
+        if self._is_greeting_only(current_message):
+            return self.compose(
+                extracted=extracted,
+                current_message=current_message,
+                recent_chat_history=history,
+                risk_level=risk_level,
+            )
+        if self._details_already_confirmed(current_message, history):
+            return self.compose(
+                extracted=extracted,
+                current_message=current_message,
+                recent_chat_history=history,
+                risk_level=risk_level,
+            )
+
+        details = self._known_details(extracted)
+        if not details:
+            return self.compose(
+                extracted=extracted,
+                current_message=current_message,
+                recent_chat_history=history,
+                risk_level=risk_level,
+            )
+
+        bullet_list = "\n".join(
+            f"- {label}: {value}" for label, value in details
+        )
+        return (
+            "Here's what I've got so far:\n"
+            f"{bullet_list}\n\n"
+            "Please confirm if these details are correct, or let me know if "
+            "you would like to change anything."
+        )
+
     def _is_greeting_only(self, message: str) -> bool:
         """Return whether the latest message contains only a greeting."""
         return bool(_GREETING_PATTERN.fullmatch(message.strip()))
@@ -111,6 +163,52 @@ class ConversationReplyComposer:
         """Detect intents that should be handed to studio staff directly."""
         normalized = message.casefold()
         return any(term in normalized for term in _MANUAL_REVIEW_TERMS)
+
+    def _details_already_confirmed(
+        self,
+        current_message: str,
+        history: list[Message],
+    ) -> bool:
+        """Detect the latest applicable client confirmation or correction."""
+        user_messages = [
+            message.content
+            for message in history
+            if message.role == "user"
+        ]
+        if not user_messages or user_messages[-1] != current_message:
+            user_messages.append(current_message)
+
+        confirmed = False
+        for message in user_messages:
+            normalized = message.casefold()
+            if (
+                any(term in normalized for term in _CORRECTION_TERMS)
+                or _CHANGE_PATTERN.search(message)
+            ):
+                confirmed = False
+            if _CONFIRMATION_PATTERN.search(message):
+                confirmed = True
+        return confirmed
+
+    def _known_details(
+        self,
+        extracted: TattooExtractionDraft,
+    ) -> list[tuple[str, str]]:
+        """Return non-empty facts in the required validation order."""
+        style_tags = [
+            tag for tag in extracted.style_tags if tag != "unknown"
+        ]
+        candidates = (
+            ("Style", ", ".join(style_tags)),
+            ("Placement", extracted.placement),
+            ("Size", extracted.size_estimate_cm),
+            ("Color", extracted.color_preference),
+        )
+        return [
+            (label, value.strip())
+            for label, value in candidates
+            if value and value.strip()
+        ]
 
     def _greeting_reply(self, history: list[Message]) -> str:
         """Start naturally without sending the full intake checklist."""
