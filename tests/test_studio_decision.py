@@ -61,6 +61,7 @@ class StaticRouter:
         extracted: TattooExtractionDraft,
         current_message: str = "",
         recent_chat_history: list[Message] | None = None,
+        existing_db_state: dict[str, object] | None = None,
     ) -> AIExtractionOutput:
         """Return a deterministic legacy routing result."""
         return _analysis()
