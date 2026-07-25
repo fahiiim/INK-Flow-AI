@@ -51,6 +51,7 @@ _MISSING_QUESTIONS = {
     "size in cm": "What rough size in cm are you thinking?",
     "placement": "Where on the body would you like it?",
     "reference images": "Do you have a reference image you can send?",
+    "tattoo style": "What tattoo style would you like?",
     "color preference": "Would you like black-and-grey or colour?",
     "preferred date": "What date or time works best for you?",
 }
@@ -58,6 +59,7 @@ _QUESTION_MARKERS = {
     "size in cm": ("size", " cm"),
     "placement": ("where", "body", "placement"),
     "reference images": ("reference", "image", "photo"),
+    "tattoo style": ("tattoo style", "style would", "style do"),
     "color preference": ("black-and-grey", "colour", "color"),
     "preferred date": ("date", "time", "when"),
 }
@@ -202,11 +204,18 @@ class ConversationReplyComposer:
         style_tags = [
             tag for tag in extracted.style_tags if tag != "unknown"
         ]
+        color_preference = extracted.color_preference
+        if color_preference == "color":
+            color_preference = "full-colour"
+        if color_preference == "black-and-grey":
+            style_tags = [
+                tag for tag in style_tags if tag != "black-and-grey"
+            ]
         descriptors = [
             value.strip()
             for value in (
                 extracted.size_estimate_cm,
-                extracted.color_preference,
+                color_preference,
                 " and ".join(style_tags),
             )
             if self._is_known_reply_value(value)
@@ -273,6 +282,26 @@ class ConversationReplyComposer:
     ) -> list[str]:
         """Choose one follow-up question, or two on the first intake turn."""
         previous = self._last_assistant_message(history).casefold()
+        if (
+            "reference images" in missing_information
+            and not any(
+                marker in previous
+                for marker in _QUESTION_MARKERS["reference images"]
+            )
+        ):
+            return [_MISSING_QUESTIONS["reference images"]]
+
+        unresolved_visual_fields = [
+            item
+            for item in ("tattoo style", "color preference")
+            if item in missing_information
+        ]
+        if unresolved_visual_fields:
+            limit = 1 if self._assistant_message_count(history) else 2
+            return [
+                _MISSING_QUESTIONS[item]
+                for item in unresolved_visual_fields[:limit]
+            ]
         not_recently_asked = [
             item
             for item in missing_information
