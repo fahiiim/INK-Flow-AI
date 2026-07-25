@@ -87,7 +87,7 @@ def test_date_correction_is_remembered_and_not_requested_again() -> None:
     assert "date" not in result.draft_reply.casefold()
     assert result.draft_reply.startswith("Got it, a tattoo on your back.")
     assert "Does that sound right" in result.draft_reply
-    assert "rough size" in result.draft_reply
+    assert "reference image" in result.draft_reply
     assert "- Placement:" not in result.draft_reply
     assert len(result.draft_reply) < 300
 
@@ -126,8 +126,8 @@ def test_normal_date_message_gets_a_simple_acknowledgement() -> None:
     assert "date" not in reply.casefold()
 
 
-def test_incomplete_request_asks_only_two_next_questions() -> None:
-    """Missing details are gathered progressively instead of all at once."""
+def test_incomplete_request_asks_for_reference_image_first() -> None:
+    """A reference image is requested before other unknown visual details."""
     extracted = TattooExtractionDraft(
         tattoo_idea="Back tattoo",
         style_tags=["unknown"],
@@ -148,8 +148,8 @@ def test_incomplete_request_asks_only_two_next_questions() -> None:
         risk_level="high",
     )
 
-    assert reply.count("?") == 2
-    assert "rough size" in reply
+    assert reply.count("?") == 1
     assert "reference image" in reply
+    assert "rough size" not in reply
     assert "Where on the body" not in reply
     assert "preferred date" not in reply.casefold()
