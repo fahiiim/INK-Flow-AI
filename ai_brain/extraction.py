@@ -21,12 +21,28 @@ from .schemas import (
     MissingInformationItem,
     StyleTag,
     TattooExtractionDraft,
+    VisualColorPreference,
 )
 
 LOGGER = logging.getLogger(__name__)
 
 _STYLE_TAG_SET = set(STYLE_TAG_OPTIONS)
 _MISSING_SET = set(MISSING_INFORMATION_OPTIONS)
+_STYLE_TEXT_ALIASES: dict[StyleTag, tuple[str, ...]] = {
+    "fine-line": ("fine-line", "fine line", "fineline"),
+    "watercolor": ("watercolor", "watercolour"),
+    "minimal": ("minimal", "minimalist"),
+    "floral": ("floral", "flower"),
+    "micro-realism": ("micro-realism", "micro realism"),
+    "black-and-grey": (
+        "black-and-grey",
+        "black and grey",
+        "black and gray",
+    ),
+    "calligraphy": ("calligraphy", "lettering"),
+    "traditional": ("traditional",),
+    "geometric": ("geometric", "geometry"),
+}
 _DATE_MENTION_PATTERN = re.compile(
     r"\b(?:"
     r"\d{4}-\d{1,2}-\d{1,2}|"
@@ -83,6 +99,7 @@ class TattooTextExtractor:
         self,
         current_message: str,
         style_tags: list[str],
+        visual_color_preference: VisualColorPreference = "unknown",
         new_image_urls: list[str] | None = None,
         existing_db_state: dict[str, Any] | None = None,
         recent_chat_history: list[Message] | None = None,
@@ -99,20 +116,32 @@ class TattooTextExtractor:
                 "Client sent reference image(s) without a text caption."
             )
 
-        normalized_tags = self._normalize_style_tags(style_tags)
         safe_db_state = dict(existing_db_state or {})
         safe_chat_history = list(recent_chat_history or [])
+        conversation_text = self._user_conversation_text(
+            current_message=normalized_message,
+            recent_chat_history=safe_chat_history,
+        )
+        text_style_tags = self._detect_style_tags_from_text(conversation_text)
+        normalized_tags = self._normalize_style_tags(
+            [*style_tags, *text_style_tags]
+        )
 
         try:
             llm_output = self._invoke_extraction_llm(
                 current_message=normalized_message,
                 style_tags=normalized_tags,
+                visual_color_preference=visual_color_preference,
                 new_image_urls=safe_image_urls,
                 existing_db_state=safe_db_state,
                 recent_chat_history=safe_chat_history,
             )
-            resolved_output = self._apply_existing_state_defaults(
+            visual_output = self._apply_visual_color_default(
                 llm_output=llm_output,
+                visual_color_preference=visual_color_preference,
+            )
+            resolved_output = self._apply_existing_state_defaults(
+                llm_output=visual_output,
                 existing_db_state=safe_db_state,
             )
             missing_information = self._finalize_missing_information(
@@ -121,6 +150,7 @@ class TattooTextExtractor:
                 new_image_urls=safe_image_urls,
                 existing_db_state=safe_db_state,
                 recent_chat_history=safe_chat_history,
+                style_tags=normalized_tags,
             )
             return TattooExtractionDraft(
                 tattoo_idea=resolved_output.tattoo_idea,
@@ -135,6 +165,7 @@ class TattooTextExtractor:
             return self._build_fallback_draft(
                 current_message=normalized_message,
                 style_tags=normalized_tags,
+                visual_color_preference=visual_color_preference,
                 new_image_urls=safe_image_urls,
                 existing_db_state=safe_db_state,
                 recent_chat_history=safe_chat_history,
@@ -144,6 +175,7 @@ class TattooTextExtractor:
         self,
         current_message: str,
         style_tags: list[StyleTag],
+        visual_color_preference: VisualColorPreference,
         new_image_urls: list[str],
         existing_db_state: dict[str, Any],
         recent_chat_history: list[Message],
@@ -153,6 +185,7 @@ class TattooTextExtractor:
         human_prompt = build_extraction_human_prompt(
             current_message=current_message,
             style_tags=style_tags,
+            visual_color_preference=visual_color_preference,
             new_image_urls=new_image_urls,
             existing_db_state=existing_db_state,
             recent_chat_history=recent_chat_history,
@@ -198,6 +231,35 @@ class TattooTextExtractor:
 
         return cast(list[StyleTag], cleaned)
 
+    def _detect_style_tags_from_text(self, text: str) -> list[str]:
+        """Detect approved style names explicitly stated in conversation text."""
+        normalized = text.casefold()
+        detected: list[str] = []
+        for style_tag, aliases in _STYLE_TEXT_ALIASES.items():
+            if any(alias in normalized for alias in aliases):
+                detected.append(style_tag)
+        return detected
+
+    def _apply_visual_color_default(
+        self,
+        llm_output: _ExtractionSubset,
+        visual_color_preference: VisualColorPreference,
+    ) -> _ExtractionSubset:
+        """Use image color only when conversation extraction has no color."""
+        color_preference = llm_output.color_preference
+        if self._is_blank(color_preference):
+            if visual_color_preference == "black-and-grey":
+                color_preference = "black-and-grey"
+            elif visual_color_preference == "color":
+                color_preference = "color"
+        return _ExtractionSubset(
+            tattoo_idea=llm_output.tattoo_idea,
+            placement=llm_output.placement,
+            size_estimate_cm=llm_output.size_estimate_cm,
+            color_preference=color_preference,
+            missing_information=llm_output.missing_information,
+        )
+
     def _finalize_missing_information(
         self,
         llm_output: _ExtractionSubset,
@@ -205,6 +267,7 @@ class TattooTextExtractor:
         new_image_urls: list[str],
         existing_db_state: dict[str, Any],
         recent_chat_history: list[Message],
+        style_tags: list[StyleTag],
     ) -> list[MissingInformationItem]:
         """Reconcile missing fields against every supplied context source."""
         missing: set[str] = {
@@ -218,6 +281,7 @@ class TattooTextExtractor:
         checks: dict[MissingInformationItem, bool] = {
             "size in cm": self._is_blank(llm_output.size_estimate_cm),
             "placement": self._is_blank(llm_output.placement),
+            "tattoo style": not any(tag != "unknown" for tag in style_tags),
             "color preference": self._is_blank(llm_output.color_preference),
             "reference images": not (
                 new_image_urls
@@ -250,6 +314,7 @@ class TattooTextExtractor:
         self,
         current_message: str,
         style_tags: list[StyleTag],
+        visual_color_preference: VisualColorPreference,
         new_image_urls: list[str],
         existing_db_state: dict[str, Any],
         recent_chat_history: list[Message],
@@ -262,8 +327,12 @@ class TattooTextExtractor:
             color_preference="",
             missing_information=[],
         )
-        resolved_fallback = self._apply_existing_state_defaults(
+        visual_fallback = self._apply_visual_color_default(
             llm_output=fallback,
+            visual_color_preference=visual_color_preference,
+        )
+        resolved_fallback = self._apply_existing_state_defaults(
+            llm_output=visual_fallback,
             existing_db_state=existing_db_state,
         )
         missing = self._finalize_missing_information(
@@ -272,6 +341,7 @@ class TattooTextExtractor:
             new_image_urls=new_image_urls,
             existing_db_state=existing_db_state,
             recent_chat_history=recent_chat_history,
+            style_tags=style_tags,
         )
         return TattooExtractionDraft(
             tattoo_idea=resolved_fallback.tattoo_idea,
