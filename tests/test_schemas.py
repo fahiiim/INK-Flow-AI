@@ -48,6 +48,32 @@ def test_hybrid_input_accepts_only_canonical_fields() -> None:
         )
 
 
+def test_input_drops_empty_history_and_accepts_image_only_message() -> None:
+    """WhatsApp media entries with no text do not cause validation errors."""
+    inquiry = TattooInquiryInput(
+        current_message="",
+        new_image_urls=["https://example.com/whatsapp-image.jpg"],
+        recent_chat_history=[
+            {"role": "user", "content": ""},
+            {"role": "user", "content": "hi"},
+        ],
+    )
+
+    assert inquiry.current_message == ""
+    assert len(inquiry.recent_chat_history) == 1
+    assert inquiry.recent_chat_history[0].content == "hi"
+
+
+def test_input_rejects_request_without_text_or_image() -> None:
+    """A request with no usable current content remains invalid."""
+    with pytest.raises(ValidationError):
+        TattooInquiryInput(
+            current_message="",
+            new_image_urls=[],
+            recent_chat_history=[],
+        )
+
+
 @pytest.mark.parametrize(
     ("field_name", "invalid_value"),
     [
