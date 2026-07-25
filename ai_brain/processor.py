@@ -60,12 +60,13 @@ class StudioAIBrain:
             image_urls=image_urls,
         )
 
-        style_tags = self.vision_analyzer.analyze_styles(
+        vision_output = self.vision_analyzer.analyze_images(
             inquiry.new_image_urls
         )
         extracted = self.text_extractor.extract(
             current_message=inquiry.current_message,
-            style_tags=style_tags,
+            style_tags=vision_output.style_tags,
+            visual_color_preference=vision_output.color_preference,
             new_image_urls=inquiry.new_image_urls,
             existing_db_state=inquiry.existing_db_state,
             recent_chat_history=inquiry.recent_chat_history,
