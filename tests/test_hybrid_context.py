@@ -56,3 +56,21 @@ def test_current_message_overrides_database_and_state_fills_blanks() -> None:
     assert result.placement == "inner wrist"
     assert result.color_preference == "black-and-grey"
     assert result.missing_information == []
+
+
+def test_extractor_accepts_image_only_message() -> None:
+    """Image-only input receives a neutral internal caption for extraction."""
+    extractor = TattooTextExtractor(
+        llm=cast(ChatOpenAI, StaticExtractionLLM()),
+    )
+
+    result = extractor.extract(
+        current_message="",
+        style_tags=["fine-line"],
+        new_image_urls=["https://example.com/whatsapp-image.jpg"],
+        existing_db_state={},
+        recent_chat_history=[],
+    )
+
+    assert result.style_tags == ["fine-line"]
+    assert "reference images" not in result.missing_information
