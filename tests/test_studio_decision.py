@@ -20,15 +20,19 @@ from ai_brain.schemas import (
     Message,
     TattooExtractionDraft,
     TattooInquiryInput,
+    TattooVisionOutput,
 )
 
 
 class StaticVisionAnalyzer:
     """Return deterministic style tags without downloading images."""
 
-    def analyze_styles(self, image_urls: list[str]) -> list[str]:
-        """Return fine-line style tags for the orchestration test."""
-        return ["fine-line", "minimal"]
+    def analyze_images(self, image_urls: list[str]) -> TattooVisionOutput:
+        """Return deterministic style and color evidence."""
+        return TattooVisionOutput(
+            style_tags=["fine-line", "minimal"],
+            color_preference="black-and-grey",
+        )
 
 
 class StaticTextExtractor:
@@ -38,6 +42,7 @@ class StaticTextExtractor:
         self,
         current_message: str,
         style_tags: list[str],
+        visual_color_preference: str = "unknown",
         new_image_urls: list[str] | None = None,
         existing_db_state: dict[str, object] | None = None,
         recent_chat_history: list[Message] | None = None,
