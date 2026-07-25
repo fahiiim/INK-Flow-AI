@@ -36,6 +36,7 @@ _ALL_STANDARD_INTAKE_MISSING = {
     "size in cm",
     "placement",
     "reference images",
+    "tattoo style",
     "color preference",
     "preferred date",
 }
