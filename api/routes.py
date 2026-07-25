@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from ai_brain.config import get_settings
 from ai_brain.errors import AnalysisPipelineError, ConfigurationError
 from ai_brain.processor import StudioAIBrain
+from ai_brain.summary import HighRiskSummaryBuilder
 
 from .constants import SERVICE_NAME, SERVICE_VERSION
 from .dependencies import get_ai_brain
@@ -18,6 +19,7 @@ from .schemas import (
     ErrorResponse,
     HealthResponse,
     TattooInquiryInput,
+    TelegramSummaryResponse,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -29,6 +31,37 @@ inquiry_router = APIRouter(
 )
 
 BrainDependency = Annotated[StudioAIBrain, Depends(get_ai_brain)]
+SUMMARY_BUILDER = HighRiskSummaryBuilder()
+
+
+def _process_inquiry(
+    payload: TattooInquiryInput,
+    brain: StudioAIBrain,
+) -> AIExtractionOutput:
+    """Run one inquiry analysis and map domain errors to HTTP responses."""
+    try:
+        return brain.process_inquiry(
+            current_message=payload.current_message,
+            new_image_urls=payload.new_image_urls,
+            existing_db_state=payload.existing_db_state,
+            recent_chat_history=payload.recent_chat_history,
+        )
+    except AnalysisPipelineError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except ConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service is not configured.",
+        ) from exc
+    except Exception as exc:
+        LOGGER.exception("Unhandled AI pipeline failure")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="AI analysis failed. Please retry later.",
+        ) from exc
 
 
 @health_router.get(
@@ -97,26 +130,52 @@ def analyze_inquiry(
     brain: BrainDependency,
 ) -> AIExtractionOutput:
     """Forward validated hybrid context to the unified AI Brain."""
-    try:
-        return brain.process_inquiry(
-            current_message=payload.current_message,
-            new_image_urls=payload.new_image_urls,
-            existing_db_state=payload.existing_db_state,
-            recent_chat_history=payload.recent_chat_history,
+    return _process_inquiry(payload, brain)
+
+
+@inquiry_router.post(
+    "/telegram-summary",
+    response_model=TelegramSummaryResponse,
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "model": ErrorResponse,
+            "description": "The inquiry cannot be processed.",
+        },
+        status.HTTP_409_CONFLICT: {
+            "model": ErrorResponse,
+            "description": "The inquiry is not high risk.",
+        },
+        status.HTTP_502_BAD_GATEWAY: {
+            "model": ErrorResponse,
+            "description": "The upstream AI pipeline failed.",
+        },
+        status.HTTP_503_SERVICE_UNAVAILABLE: {
+            "model": ErrorResponse,
+            "description": "The AI service is not configured.",
+        },
+    },
+    summary="Create a high-risk Telegram summary",
+)
+def create_telegram_summary(
+    payload: TattooInquiryInput,
+    brain: BrainDependency,
+) -> TelegramSummaryResponse:
+    """Return staff summary text without sending it to Telegram."""
+    analysis = _process_inquiry(payload, brain)
+    if analysis.risk_level != "high":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Telegram summary is available only for high-risk inquiries.",
         )
-    except AnalysisPipelineError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-    except ConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI service is not configured.",
-        ) from exc
-    except Exception as exc:
-        LOGGER.exception("Unhandled AI pipeline failure")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="AI analysis failed. Please retry later.",
-        ) from exc
+
+    summary = SUMMARY_BUILDER.build(payload, analysis)
+    telegram_message = SUMMARY_BUILDER.combine_with_draft(
+        summary=summary,
+        draft_reply=analysis.draft_reply,
+    )
+    return TelegramSummaryResponse(
+        risk_level="high",
+        summary=summary,
+        draft_reply=analysis.draft_reply,
+        telegram_message=telegram_message,
+    )
