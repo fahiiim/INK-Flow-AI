@@ -89,11 +89,17 @@ class TattooTextExtractor:
     ) -> TattooExtractionDraft:
         """Extract details from the latest message and supplied context."""
         normalized_message = current_message.strip()
+        safe_image_urls = list(new_image_urls or [])
+        if not normalized_message and not safe_image_urls:
+            raise AnalysisPipelineError(
+                "current_message or new_image_urls must be provided."
+            )
         if not normalized_message:
-            raise AnalysisPipelineError("current_message must not be empty.")
+            normalized_message = (
+                "Client sent reference image(s) without a text caption."
+            )
 
         normalized_tags = self._normalize_style_tags(style_tags)
-        safe_image_urls = list(new_image_urls or [])
         safe_db_state = dict(existing_db_state or {})
         safe_chat_history = list(recent_chat_history or [])
 
