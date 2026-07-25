@@ -192,6 +192,57 @@ def test_analyze_endpoint_keeps_latest_seven_history_messages() -> None:
     ]
 
 
+def test_analyze_endpoint_accepts_logged_whatsapp_media_history() -> None:
+    """Empty image-only history text is removed before API processing."""
+    brain = StubAIBrain(result=_successful_output())
+
+    with _client_with_brain(brain) as client:
+        response = client.post(
+            "/api/v1/inquiries/analyze",
+            json={
+                "current_message": "hi",
+                "new_image_urls": [],
+                "existing_db_state": {
+                    "lead_id": 3,
+                    "lead_name": "Samim Osman",
+                    "lead_phone": "8801775155760",
+                },
+                "recent_chat_history": [
+                    {"role": "user", "content": ""},
+                    {"role": "user", "content": "hi"},
+                    {"role": "user", "content": "ok"},
+                    {"role": "user", "content": "hi"},
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    history = brain.calls[0]["recent_chat_history"]
+    assert isinstance(history, list)
+    assert [message.content for message in history] == ["hi", "ok", "hi"]
+
+
+def test_analyze_endpoint_accepts_image_without_caption() -> None:
+    """A current WhatsApp image can be processed without message text."""
+    brain = StubAIBrain(result=_successful_output())
+
+    with _client_with_brain(brain) as client:
+        response = client.post(
+            "/api/v1/inquiries/analyze",
+            json={
+                "current_message": "",
+                "new_image_urls": [
+                    "https://example.com/whatsapp-image.jpg"
+                ],
+                "existing_db_state": {},
+                "recent_chat_history": [],
+            },
+        )
+
+    assert response.status_code == 200
+    assert brain.calls[0]["current_message"] == ""
+
+
 def test_analyze_endpoint_rejects_invalid_payload() -> None:
     """FastAPI rejects an empty current message before invoking AI."""
     brain = StubAIBrain(result=_successful_output())
