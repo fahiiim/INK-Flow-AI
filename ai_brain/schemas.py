@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
     field_validator,
+    model_validator,
 )
 
 STYLE_TAG_OPTIONS: tuple[str, ...] = (
@@ -78,8 +79,9 @@ class TattooInquiryInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     current_message: str = Field(
-        min_length=1,
-        description="Latest client message, which overrides conflicting state.",
+        description=(
+            "Latest client text, or an empty string for an image-only message."
+        ),
     )
     new_image_urls: list[str] = Field(
         default_factory=list,
@@ -104,10 +106,31 @@ class TattooInquiryInput(BaseModel):
     @field_validator("recent_chat_history", mode="before")
     @classmethod
     def keep_latest_chat_history(cls, value: Any) -> Any:
-        """Keep only the latest seven raw messages before validation."""
-        if isinstance(value, (list, tuple)):
-            return list(value[-7:])
-        return value
+        """Drop empty media-only text entries and keep the latest seven."""
+        if not isinstance(value, (list, tuple)):
+            return value
+
+        non_empty_messages: list[Any] = []
+        for item in value:
+            if isinstance(item, Message):
+                if item.content.strip():
+                    non_empty_messages.append(item)
+                continue
+            if isinstance(item, dict):
+                content = item.get("content")
+                if isinstance(content, str) and not content.strip():
+                    continue
+            non_empty_messages.append(item)
+        return non_empty_messages[-7:]
+
+    @model_validator(mode="after")
+    def require_text_or_image(self) -> Self:
+        """Require usable text or at least one attached image URL."""
+        if not self.current_message and not self.new_image_urls:
+            raise ValueError(
+                "current_message or at least one new_image_url is required."
+            )
+        return self
 
 
 class TattooExtractionDraft(BaseModel):
