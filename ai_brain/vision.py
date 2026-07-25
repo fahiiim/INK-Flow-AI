@@ -15,14 +15,19 @@ from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
 
 from .llm import get_chat_model
 from .prompts import VISION_SYSTEM_PROMPT
-from .schemas import STYLE_TAG_OPTIONS, StyleTag
+from .schemas import (
+    STYLE_TAG_OPTIONS,
+    StyleTag,
+    TattooVisionOutput,
+    VisualColorPreference,
+)
 
 LOGGER = logging.getLogger(__name__)
 
 _STYLE_TAG_SET = set(STYLE_TAG_OPTIONS)
 
 class TattooVisionAnalyzer:
-    """Analyze reference images and return normalized style tags."""
+    """Analyze reference images for normalized tattoo style and color."""
 
     def __init__(
         self,
@@ -34,13 +39,13 @@ class TattooVisionAnalyzer:
         self._timeout_seconds = timeout_seconds
         self._url_adapter = TypeAdapter(AnyHttpUrl)
 
-    def analyze_styles(self, image_urls: list[str]) -> list[StyleTag]:
-        """Detect tattoo styles from image URLs.
+    def analyze_images(self, image_urls: list[str]) -> TattooVisionOutput:
+        """Detect tattoo style and color from image URLs.
 
-        Invalid URLs, download issues, or API failures return ["unknown"].
+        Invalid URLs, download issues, or API failures return unknown values.
         """
         if not image_urls:
-            return ["unknown"]
+            return self._unknown_output()
 
         data_uris: list[str] = []
         for image_url in image_urls:
@@ -49,17 +54,19 @@ class TattooVisionAnalyzer:
                 data_uris.append(data_uri)
 
         if not data_uris:
-            return ["unknown"]
+            return self._unknown_output()
 
         try:
             raw_text = self._invoke_vision_model(data_uris)
-            tags = self._parse_style_tags(raw_text)
-            if tags:
-                return tags
+            return self._parse_vision_output(raw_text)
         except Exception as exc:  # pragma: no cover - defensive branch
             LOGGER.warning("Vision analysis failed: %s", exc)
 
-        return ["unknown"]
+        return self._unknown_output()
+
+    def analyze_styles(self, image_urls: list[str]) -> list[StyleTag]:
+        """Return only style tags for legacy callers."""
+        return self.analyze_images(image_urls).style_tags
 
     def _download_as_data_uri(self, image_url: str) -> str | None:
         """Download an image URL and convert it into a data URI."""
@@ -130,25 +137,22 @@ class TattooVisionAnalyzer:
             return "".join(text_parts)
         return str(content)
 
-    def _parse_style_tags(self, raw_text: str) -> list[StyleTag]:
-        """Parse and sanitize model output into approved style tags."""
-        parsed: Any
-        try:
-            parsed = json.loads(raw_text)
-        except json.JSONDecodeError:
-            match = re.search(r"\[[\s\S]*\]", raw_text)
-            if not match:
-                return []
-            try:
-                parsed = json.loads(match.group(0))
-            except json.JSONDecodeError:
-                return []
-
-        if not isinstance(parsed, list):
-            return []
+    def _parse_vision_output(self, raw_text: str) -> TattooVisionOutput:
+        """Parse and sanitize model output into approved style and color."""
+        parsed = self._load_json_payload(raw_text)
+        if isinstance(parsed, list):
+            raw_tags = parsed
+            raw_color = "unknown"
+        elif isinstance(parsed, dict):
+            raw_tags = parsed.get("style_tags", [])
+            raw_color = parsed.get("color_preference", "unknown")
+        else:
+            return self._unknown_output()
 
         cleaned: list[str] = []
-        for item in parsed:
+        if not isinstance(raw_tags, list):
+            raw_tags = []
+        for item in raw_tags:
             if not isinstance(item, str):
                 continue
             normalized = item.strip().lower()
@@ -156,8 +160,56 @@ class TattooVisionAnalyzer:
                 cleaned.append(normalized)
 
         if not cleaned:
-            return []
+            cleaned = ["unknown"]
         if "unknown" in cleaned and len(cleaned) > 1:
             cleaned = [tag for tag in cleaned if tag != "unknown"]
 
-        return cast(list[StyleTag], cleaned)
+        color = self._normalize_color(raw_color)
+        if color == "unknown" and "black-and-grey" in cleaned:
+            color = "black-and-grey"
+        return TattooVisionOutput(
+            style_tags=cast(list[StyleTag], cleaned),
+            color_preference=color,
+        )
+
+    def _load_json_payload(self, raw_text: str) -> Any:
+        """Load a JSON object, with support for fenced explanatory output."""
+        try:
+            return json.loads(raw_text)
+        except json.JSONDecodeError:
+            match = re.search(r"\{[\s\S]*\}|\[[\s\S]*\]", raw_text)
+            if not match:
+                return None
+            try:
+                return json.loads(match.group(0))
+            except json.JSONDecodeError:
+                return None
+
+    def _normalize_color(self, raw_color: Any) -> VisualColorPreference:
+        """Normalize common model color labels to the strict taxonomy."""
+        if not isinstance(raw_color, str):
+            return "unknown"
+        normalized = raw_color.strip().lower()
+        aliases = {
+            "black and grey": "black-and-grey",
+            "black & grey": "black-and-grey",
+            "black and gray": "black-and-grey",
+            "black & gray": "black-and-grey",
+            "full color": "color",
+            "full colour": "color",
+            "colour": "color",
+            "colored": "color",
+        }
+        normalized = aliases.get(normalized, normalized)
+        if normalized == "black-and-grey":
+            return "black-and-grey"
+        if normalized == "color":
+            return "color"
+        return "unknown"
+
+    def _unknown_output(self) -> TattooVisionOutput:
+        """Return the safe result used when vision evidence is unavailable."""
+        return TattooVisionOutput(
+            style_tags=["unknown"],
+            color_preference="unknown",
+        )
