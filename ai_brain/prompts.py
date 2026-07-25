@@ -10,11 +10,12 @@ from .schemas import Message
 
 VISION_SYSTEM_PROMPT = (
     "You are an expert tattoo artist and style analyst. "
-    "Review the provided images and return ONLY a JSON array. "
-    "Every array item must be from this exact list: "
+    "Review the provided images and return ONLY one JSON object with keys "
+    "style_tags and color_preference. Every style_tags item must be from: "
     '["fine-line", "watercolor", "minimal", "floral", "micro-realism", '
     '"black-and-grey", "calligraphy", "traditional", "geometric", '
-    '"unknown"]. Do not add extra text.'
+    '"unknown"]. color_preference must be exactly "black-and-grey", "color", '
+    'or "unknown". Use "unknown" when the image is unclear. Do not add text.'
 )
 
 EXTRACTION_SYSTEM_PROMPT = (
@@ -28,6 +29,7 @@ EXTRACTION_SYSTEM_PROMPT = (
     "recent_chat_history or existing_db_state. "
     "Only add an item to missing_information after checking current_message, "
     "recent_chat_history, and existing_db_state and confirming it is absent. "
+    "Use visual_color_preference when it is not unknown. "
     "Extract tattoo idea, placement, size estimate in cm, and color preference. "
     "Return strictly valid JSON and do not include markdown or extra text."
 )
@@ -74,6 +76,7 @@ def build_extraction_human_prompt(
     new_image_urls: Sequence[str] | None = None,
     existing_db_state: Mapping[str, Any] | None = None,
     recent_chat_history: Sequence[Message] = (),
+    visual_color_preference: str = "unknown",
     required_items: Sequence[str],
     format_instructions: str,
     client_text: str | None = None,
@@ -101,6 +104,7 @@ def build_extraction_human_prompt(
         "current_message": resolved_message,
         "new_image_urls": resolved_image_urls,
         "detected_style_tags": list(style_tags),
+        "visual_color_preference": visual_color_preference,
     }
     serialized_context = json.dumps(
         context_payload,
