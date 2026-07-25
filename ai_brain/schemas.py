@@ -29,6 +29,7 @@ MISSING_INFORMATION_OPTIONS: tuple[str, ...] = (
     "size in cm",
     "placement",
     "reference images",
+    "tattoo style",
     "color preference",
     "preferred date",
 )
@@ -49,11 +50,13 @@ StyleTag = Literal[
 SuggestedArtist = Literal["Nina", "Hoss", "Unclear"]
 ConfidenceLevel = Literal["high", "medium", "low"]
 RiskLevel = Literal["low", "high"]
+VisualColorPreference = Literal["black-and-grey", "color", "unknown"]
 
 MissingInformationItem = Literal[
     "size in cm",
     "placement",
     "reference images",
+    "tattoo style",
     "color preference",
     "preferred date",
 ]
@@ -131,6 +134,15 @@ class TattooInquiryInput(BaseModel):
                 "current_message or at least one new_image_url is required."
             )
         return self
+
+
+class TattooVisionOutput(BaseModel):
+    """Strict style and color signals extracted from reference images."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    style_tags: list[StyleTag] = Field(min_length=1)
+    color_preference: VisualColorPreference
 
 
 class TattooExtractionDraft(BaseModel):
