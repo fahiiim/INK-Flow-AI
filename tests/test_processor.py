@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from ai_brain.processor import StudioAIBrain
-from ai_brain.schemas import AIExtractionOutput, Message, TattooExtractionDraft
+from ai_brain.schemas import (
+    AIExtractionOutput,
+    Message,
+    TattooExtractionDraft,
+    TattooVisionOutput,
+)
 
 
 class StubVisionAnalyzer:
@@ -13,10 +18,16 @@ class StubVisionAnalyzer:
         self._tags = tags
         self.calls: list[list[str]] = []
 
-    def analyze_styles(self, image_urls: list[str]) -> list[str]:
-        """Return pre-defined tags and track invocation input."""
+    def analyze_images(self, image_urls: list[str]) -> TattooVisionOutput:
+        """Return pre-defined style/color evidence and track input."""
         self.calls.append(image_urls)
-        return self._tags
+        color = "unknown"
+        if "black-and-grey" in self._tags:
+            color = "black-and-grey"
+        return TattooVisionOutput(
+            style_tags=self._tags,
+            color_preference=color,
+        )
 
 
 class StubTextExtractor:
@@ -30,6 +41,7 @@ class StubTextExtractor:
         self,
         current_message: str,
         style_tags: list[str],
+        visual_color_preference: str = "unknown",
         new_image_urls: list[str] | None = None,
         existing_db_state: dict[str, object] | None = None,
         recent_chat_history: list[Message] | None = None,
@@ -39,6 +51,7 @@ class StubTextExtractor:
             {
                 "current_message": current_message,
                 "style_tags": style_tags,
+                "visual_color_preference": visual_color_preference,
                 "new_image_urls": new_image_urls or [],
                 "existing_db_state": existing_db_state or {},
                 "recent_chat_history": recent_chat_history or [],
