@@ -94,7 +94,8 @@ def test_router_keeps_all_standard_missing_information_low_risk() -> None:
 
     assert result.risk_level == "low"
     assert "studio team review" not in result.draft_reply
-    assert result.draft_reply.count("?") == 2
+    assert "reference image" in result.draft_reply
+    assert result.draft_reply.count("?") == 1
 
 
 def test_router_keeps_basic_missing_information_low_risk() -> None:
