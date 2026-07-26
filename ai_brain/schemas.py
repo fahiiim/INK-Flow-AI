@@ -96,8 +96,8 @@ class TattooInquiryInput(BaseModel):
     )
     recent_chat_history: list[Message] = Field(
         default_factory=list,
-        max_length=7,
-        description="Up to seven recent messages used for context resolution.",
+        max_length=30,
+        description="Up to 30 recent messages used for context resolution.",
     )
 
     @field_validator("new_image_urls")
@@ -109,7 +109,7 @@ class TattooInquiryInput(BaseModel):
     @field_validator("recent_chat_history", mode="before")
     @classmethod
     def keep_latest_chat_history(cls, value: Any) -> Any:
-        """Drop empty media-only text entries and keep the latest seven."""
+        """Drop empty media-only text entries and keep the latest 30."""
         if not isinstance(value, (list, tuple)):
             return value
 
@@ -124,7 +124,7 @@ class TattooInquiryInput(BaseModel):
                 if isinstance(content, str) and not content.strip():
                     continue
             non_empty_messages.append(item)
-        return non_empty_messages[-7:]
+        return non_empty_messages[-30:]
 
     @model_validator(mode="after")
     def require_text_or_image(self) -> Self:
