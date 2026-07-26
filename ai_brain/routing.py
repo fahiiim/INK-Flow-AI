@@ -46,6 +46,7 @@ _HIGH_RISK_TERMS = (
     "pricing",
     "cost",
     "quote",
+    "how much",
     "booking",
     "book an appointment",
     "complaint",
@@ -106,7 +107,11 @@ class TattooRouter:
             style_tags=extracted.style_tags,
             size_estimate_cm=extracted.size_estimate_cm,
         )
-        risk_level = self._classify_risk(extracted)
+        risk_level = self._classify_risk(
+            extracted=extracted,
+            current_message=current_message,
+            recent_chat_history=history,
+        )
         llm_output = self._generate_reasoning_and_reply(
             extracted=extracted,
             suggested_artist=suggested_artist,
@@ -216,16 +221,28 @@ class TattooRouter:
         size_words = ("sleeve", "full back", "back piece", "large", "full arm")
         return any(word in normalized for word in size_words)
 
-    def _classify_risk(self, extracted: TattooExtractionDraft) -> RiskLevel:
-        """Classify low vs high risk based on content and missing info."""
+    def _classify_risk(
+        self,
+        extracted: TattooExtractionDraft,
+        current_message: str = "",
+        recent_chat_history: list[Message] | None = None,
+    ) -> RiskLevel:
+        """Classify risk from extracted data and user conversation context."""
+        user_history = [
+            message.content
+            for message in recent_chat_history or []
+            if message.role == "user"
+        ]
         searchable = " ".join(
             [
-                extracted.tattoo_idea.lower(),
-                extracted.placement.lower(),
-                extracted.size_estimate_cm.lower(),
-                extracted.color_preference.lower(),
+                current_message,
+                *user_history,
+                extracted.tattoo_idea,
+                extracted.placement,
+                extracted.size_estimate_cm,
+                extracted.color_preference,
             ]
-        )
+        ).lower()
 
         # High-risk intent always takes precedence over intake completeness.
         if any(term in searchable for term in _HIGH_RISK_TERMS):
