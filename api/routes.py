@@ -19,6 +19,7 @@ from .schemas import (
     ErrorResponse,
     HealthResponse,
     TattooInquiryInput,
+    TelegramSummaryInput,
     TelegramSummaryResponse,
 )
 
@@ -157,7 +158,7 @@ def analyze_inquiry(
     summary="Create a high-risk Telegram summary",
 )
 def create_telegram_summary(
-    payload: TattooInquiryInput,
+    payload: TelegramSummaryInput,
     brain: BrainDependency,
 ) -> TelegramSummaryResponse:
     """Return staff summary text without sending it to Telegram."""
