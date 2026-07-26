@@ -12,7 +12,7 @@ from langchain_openai import ChatOpenAI
 import ai_brain.llm as llm_module
 from ai_brain.config import LLMSettings
 from ai_brain.routing import TattooRouter
-from ai_brain.schemas import TattooExtractionDraft
+from ai_brain.schemas import Message, TattooExtractionDraft
 from ai_brain.vision import TattooVisionAnalyzer
 
 
@@ -68,6 +68,51 @@ def test_router_flags_high_risk_keywords_before_missing_information() -> None:
     assert result.suggested_artist == "Unclear"
     assert result.confidence_level == "low"
     assert "studio team review" in result.draft_reply
+
+
+def test_router_flags_price_question_in_user_chat_history() -> None:
+    """Price intent in user history remains high with neutral extraction data."""
+    draft = TattooExtractionDraft(
+        tattoo_idea="20cm black floral tattoo",
+        style_tags=["floral"],
+        placement="hand",
+        size_estimate_cm="20cm",
+        color_preference="black-and-grey",
+        missing_information=["reference images", "preferred date"],
+    )
+
+    result = _router_with_failing_llm().route(
+        draft,
+        current_message="I would like to confirm the details.",
+        recent_chat_history=[
+            Message(
+                role="assistant",
+                content="Please share reference images for the appointment.",
+            ),
+            Message(role="user", content="What will be the price?"),
+        ],
+    )
+
+    assert result.risk_level == "high"
+
+
+def test_router_flags_how_much_in_current_message() -> None:
+    """Common price wording in the latest client message is high risk."""
+    draft = TattooExtractionDraft(
+        tattoo_idea="20cm black floral tattoo",
+        style_tags=["floral"],
+        placement="hand",
+        size_estimate_cm="20cm",
+        color_preference="black-and-grey",
+        missing_information=["reference images", "preferred date"],
+    )
+
+    result = _router_with_failing_llm().route(
+        draft,
+        current_message="How much would this tattoo cost?",
+    )
+
+    assert result.risk_level == "high"
 
 
 def test_router_keeps_all_standard_missing_information_low_risk() -> None:
