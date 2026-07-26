@@ -110,6 +110,43 @@ def test_high_risk_endpoint_returns_summary_then_draft_reply() -> None:
     assert len(brain.calls) == 1
 
 
+def test_summary_endpoint_accepts_legacy_history_and_lead_payload() -> None:
+    """Legacy summary callers can send chat_history and lead directly."""
+    brain = StubAIBrain(_analysis("high"))
+
+    with _client(brain) as client:
+        response = client.post(
+            "/api/v1/inquiries/telegram-summary",
+            json={
+                "chat_history": [
+                    {
+                        "role": "user",
+                        "content": "I want a large floral tattoo on my hand.",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "Please confirm the appointment date.",
+                    },
+                    {
+                        "role": "user",
+                        "content": "What will be the price?",
+                    },
+                ],
+                "lead": {
+                    "lead_id": 3,
+                    "lead_name": "Samim Osman",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert brain.calls[0]["current_message"] == "What will be the price?"
+    assert brain.calls[0]["existing_db_state"] == {
+        "lead_id": 3,
+        "lead_name": "Samim Osman",
+    }
+
+
 def test_low_risk_endpoint_returns_conflict_without_summary() -> None:
     """Low-risk inquiries are not formatted for Telegram escalation."""
     brain = StubAIBrain(_analysis("low"))
