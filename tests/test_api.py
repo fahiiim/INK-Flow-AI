@@ -157,7 +157,7 @@ def test_analyze_endpoint_returns_strict_output() -> None:
     ]
 
 
-def test_analyze_endpoint_keeps_latest_seven_history_messages() -> None:
+def test_analyze_endpoint_keeps_latest_thirty_history_messages() -> None:
     """Oversized histories are normalized before endpoint processing."""
     brain = StubAIBrain(result=_successful_output())
     history = [
@@ -165,7 +165,7 @@ def test_analyze_endpoint_keeps_latest_seven_history_messages() -> None:
             "role": "user",
             "content": f"message {index}",
         }
-        for index in range(10)
+        for index in range(35)
     ]
 
     with _client_with_brain(brain) as client:
@@ -185,10 +185,10 @@ def test_analyze_endpoint_keeps_latest_seven_history_messages() -> None:
     assert response.status_code == 200
     forwarded_history = brain.calls[0]["recent_chat_history"]
     assert isinstance(forwarded_history, list)
-    assert len(forwarded_history) == 7
+    assert len(forwarded_history) == 30
     assert all(isinstance(message, Message) for message in forwarded_history)
     assert [message.content for message in forwarded_history] == [
-        f"message {index}" for index in range(3, 10)
+        f"message {index}" for index in range(5, 35)
     ]
 
 
