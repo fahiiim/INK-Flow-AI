@@ -1,0 +1,51 @@
+config_version: 1
+artists:
+  - artist_key: nina
+    display_name: Nina
+    specialties:
+      - fine-line
+      - minimal
+      - micro-realism
+    min_size_cm: 2.0
+    max_size_cm: 15.0
+    is_active: true
+
+  - artist_key: hoss
+    display_name: Hoss
+    specialties:
+      - watercolor
+      - traditional
+      - black-and-grey
+    min_size_cm: 8.0
+    max_size_cm: null
+    is_active: true
+
+  - artist_key: lana
+    display_name: Lana
+    specialties:
+      - fine-line
+      - floral
+      - geometric
+    min_size_cm: 3.0
+    max_size_cm: 18.0
+    is_active: true
+
+  - artist_key: sliva
+    display_name: Sliva
+    specialties:
+      - calligraphy
+      - geometric
+      - black-and-grey
+    min_size_cm: 4.0
+    max_size_cm: 25.0
+    is_active: true
+
+  - artist_key: sandra
+    display_name: Sandra
+    specialties:
+      - watercolor
+      - floral
+      - minimal
+    min_size_cm: 2.0
+    max_size_cm: 20.0
+    is_active: true
