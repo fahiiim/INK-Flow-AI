@@ -157,6 +157,7 @@ def test_decision_engine_uses_vector_search() -> None:
     """The engine uses retrieved feedback to override static artist routing."""
     fine_line_case = _records()[0]
     vector_store = Mock(spec=VectorStoreManager)
+    vector_store.records = tuple(_records() * 4)
     vector_store.search_similar_cases.return_value = [
         (0.99, fine_line_case)
     ]

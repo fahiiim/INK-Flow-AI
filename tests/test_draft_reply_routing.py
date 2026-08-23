@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 from typing import cast
+from unittest.mock import Mock
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -12,6 +13,7 @@ from langchain_openai import ChatOpenAI
 from ai_brain.prompts import DRAFT_REPLY_SYSTEM_PROMPT
 from ai_brain.routing import TattooRouter
 from ai_brain.schemas import Message, TattooExtractionDraft
+from ai_brain.vector_store import VectorStoreManager
 
 
 class SequentialLLM:
@@ -25,6 +27,14 @@ class SequentialLLM:
         """Capture messages and return the next configured JSON response."""
         self.calls.append(messages)
         return SimpleNamespace(content=next(self._responses))
+
+
+def _warm_vector_store() -> VectorStoreManager:
+    """Return a ten-record vector-store mock with no search matches."""
+    vector_store = Mock(spec=VectorStoreManager)
+    vector_store.records = tuple(range(10))
+    vector_store.search_similar_cases.return_value = []
+    return cast(VectorStoreManager, vector_store)
 
 
 def _complete_draft() -> TattooExtractionDraft:
@@ -65,6 +75,7 @@ def test_router_accepts_strict_validation_draft_reply() -> None:
 
     result = TattooRouter(
         llm=cast(ChatOpenAI, fake_llm),
+        vector_store=_warm_vector_store(),
     ).route(
         extracted=_complete_draft(),
         current_message="I want a 5cm fine-line lotus on my wrist.",
@@ -95,6 +106,7 @@ def test_confirmed_history_is_available_to_draft_prompt() -> None:
 
     result = TattooRouter(
         llm=cast(ChatOpenAI, fake_llm),
+        vector_store=_warm_vector_store(),
     ).route(
         extracted=_complete_draft(),
         current_message="Yes, those details are correct.",
@@ -121,6 +133,7 @@ def test_non_string_draft_reply_uses_validated_fallback() -> None:
 
     result = TattooRouter(
         llm=cast(ChatOpenAI, fake_llm),
+        vector_store=_warm_vector_store(),
     ).route(
         extracted=_complete_draft(),
         current_message="I want this tattoo.",

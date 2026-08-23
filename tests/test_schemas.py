@@ -77,7 +77,7 @@ def test_input_rejects_request_without_text_or_image() -> None:
 @pytest.mark.parametrize(
     ("field_name", "invalid_value"),
     [
-        ("suggested_artist", "Lana"),
+        ("suggested_artist", ""),
         ("confidence_level", "certain"),
         ("risk_level", "medium"),
         ("style_tags", ["neo-traditional"]),

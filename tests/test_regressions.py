@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import Mock
 
 import pytest
 from langchain_core.messages import BaseMessage, HumanMessage
@@ -13,6 +14,7 @@ import ai_brain.llm as llm_module
 from ai_brain.config import LLMSettings
 from ai_brain.routing import TattooRouter
 from ai_brain.schemas import Message, TattooExtractionDraft
+from ai_brain.vector_store import VectorStoreManager
 from ai_brain.vision import TattooVisionAnalyzer
 
 
@@ -39,7 +41,13 @@ class CapturingVisionLLM:
 def _router_with_failing_llm() -> TattooRouter:
     """Build a router whose LLM call always enters fallback logic."""
     llm = cast(ChatOpenAI, FailingLLM())
-    return TattooRouter(llm=llm)
+    vector_store = Mock(spec=VectorStoreManager)
+    vector_store.records = tuple(range(10))
+    vector_store.search_similar_cases.return_value = []
+    return TattooRouter(
+        llm=llm,
+        vector_store=cast(VectorStoreManager, vector_store),
+    )
 
 
 def test_router_flags_high_risk_keywords_before_missing_information() -> None:
@@ -157,8 +165,8 @@ def test_router_keeps_basic_missing_information_low_risk() -> None:
     result = _router_with_failing_llm().route(draft)
 
     assert result.risk_level == "low"
-    assert result.suggested_artist == "Nina"
-    assert result.confidence_level == "high"
+    assert result.suggested_artist == "Sandra"
+    assert result.confidence_level == "medium"
     assert "black-and-grey minimal and floral tattoo" in result.draft_reply
     assert "Does that sound right" in result.draft_reply
     assert "- Style:" not in result.draft_reply

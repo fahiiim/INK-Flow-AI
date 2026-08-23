@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import cast
+from unittest.mock import Mock
 
 from ai_brain.decision import StudioDecisionEngine
 from ai_brain.decision_schemas import (
@@ -22,6 +24,7 @@ from ai_brain.schemas import (
     TattooInquiryInput,
     TattooVisionOutput,
 )
+from ai_brain.vector_store import VectorStoreManager
 
 
 class StaticVisionAnalyzer:
@@ -70,6 +73,16 @@ class StaticRouter:
     ) -> AIExtractionOutput:
         """Return a deterministic legacy routing result."""
         return _analysis()
+
+
+def _warm_decision_engine() -> StudioDecisionEngine:
+    """Return an engine past cold start with request-context fallback."""
+    vector_store = Mock(spec=VectorStoreManager)
+    vector_store.records = tuple(range(10))
+    vector_store.search_similar_cases.return_value = []
+    return StudioDecisionEngine(
+        vector_store=cast(VectorStoreManager, vector_store)
+    )
 
 
 def _analysis() -> AIExtractionOutput:
@@ -145,7 +158,7 @@ def _context(*, include_rule: bool = True) -> StudioDecisionContext:
 
 def test_verified_correction_can_suggest_request_scoped_lana() -> None:
     """A relevant verified correction overrides legacy default routing."""
-    result = StudioDecisionEngine().decide(
+    result = _warm_decision_engine().decide(
         analysis=_analysis(),
         current_message="I want this matching tattoo with my sister.",
         context=_context(),
@@ -170,7 +183,7 @@ def test_verified_correction_can_suggest_request_scoped_lana() -> None:
 
 def test_approved_history_can_supply_internal_price_without_rule() -> None:
     """Verified approved prices act as conservative fallback evidence."""
-    result = StudioDecisionEngine().decide(
+    result = _warm_decision_engine().decide(
         analysis=_analysis(),
         current_message="I want matching wrist tattoos.",
         context=_context(include_rule=False),
@@ -186,7 +199,7 @@ def test_approved_history_can_supply_internal_price_without_rule() -> None:
 
 def test_pricing_request_requires_review_and_context_does_not_leak() -> None:
     """Prices remain internal and direct price questions require review."""
-    engine = StudioDecisionEngine()
+    engine = _warm_decision_engine()
     first = engine.decide(
         analysis=_analysis(),
         current_message="How much will the matching tattoos cost?",
@@ -215,7 +228,7 @@ def test_pricing_request_requires_review_and_context_does_not_leak() -> None:
 
 def test_learning_record_is_serializable_and_contains_human_feedback() -> None:
     """The AI builds a record but performs no persistence itself."""
-    engine = StudioDecisionEngine()
+    engine = _warm_decision_engine()
     context = _context()
     inquiry = TattooInquiryInput(
         current_message="Actually make it 6cm.",
@@ -275,6 +288,7 @@ def test_studio_ai_brain_exposes_internal_decision_entry_point() -> None:
         vision_analyzer=StaticVisionAnalyzer(),
         text_extractor=StaticTextExtractor(),
         router=StaticRouter(),
+        decision_engine=_warm_decision_engine(),
     )
     inquiry = TattooInquiryInput(
         current_message="Matching tattoo with my sister.",
