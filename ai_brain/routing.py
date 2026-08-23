@@ -24,6 +24,7 @@ from .prompts import (
     build_routing_human_prompt,
 )
 from .reply import ConversationReplyComposer
+from .routing_rules import RoutingRule, RoutingRuleEngine
 from .schemas import (
     AIExtractionOutput,
     ConfidenceLevel,
@@ -107,6 +108,7 @@ class TattooRouter:
         artist_config_manager: ArtistConfigManager | None = None,
         vector_store: VectorStoreManager | None = None,
         cold_start_manager: ColdStartManager | None = None,
+        routing_rule_engine: RoutingRuleEngine | None = None,
     ) -> None:
         """Initialize model, configuration, retrieval, and safety services."""
         self._llm = llm or get_chat_model(model_name=model_name)
@@ -125,6 +127,11 @@ class TattooRouter:
             cold_start_manager
             if cold_start_manager is not None
             else ColdStartManager()
+        )
+        self._routing_rule_engine = (
+            routing_rule_engine
+            if routing_rule_engine is not None
+            else RoutingRuleEngine()
         )
 
     def route(
@@ -231,7 +238,7 @@ class TattooRouter:
         self,
         extracted: TattooExtractionDraft,
     ) -> _ArtistRoutingDecision:
-        """Select an artist from cold-start, history, or configured rules."""
+        """Select an artist from cold start, configured rules, or history."""
         is_cold_start, record_count = self._cold_start_status()
         if is_cold_start:
             self._cold_start_manager.log_cold_start_warning()
@@ -245,7 +252,15 @@ class TattooRouter:
                 cold_start=True,
             )
 
+        rules = self._routing_rule_engine.evaluate(extracted)
         matches = self._search_similar_cases(extracted)
+        rule_decision = self._suggest_from_rules(
+            rules=rules,
+            matches=matches,
+            extracted=extracted,
+        )
+        if rule_decision is not None:
+            return rule_decision
         if matches:
             return self._suggest_from_history(matches)
         return self._suggest_from_config(extracted)
@@ -351,6 +366,109 @@ class TattooRouter:
             confidence_level="low",
             reasoning=f"Manual artist assignment required. {reason}",
         )
+
+    def _suggest_from_rules(
+        self,
+        rules: list[RoutingRule],
+        matches: list[tuple[float, DecisionHistoryExample]],
+        extracted: TattooExtractionDraft,
+    ) -> _ArtistRoutingDecision | None:
+        """Apply the highest-priority valid rule and add history support."""
+        valid_rules = self._valid_artist_rules(rules, extracted)
+        if not valid_rules:
+            return None
+
+        highest_priority = valid_rules[0].priority
+        highest_rules = [
+            rule for rule in valid_rules if rule.priority == highest_priority
+        ]
+        artist_keys = {rule.artist_key for rule in highest_rules}
+        rule_names = self._rule_names(valid_rules)
+        if len(artist_keys) != 1:
+            return _ArtistRoutingDecision(
+                suggested_artist="Unclear",
+                confidence_level="low",
+                reasoning=(
+                    "Manual artist assignment required. Conflicting "
+                    f"highest-priority rules matched. Applied routing rules: "
+                    f"{rule_names}."
+                ),
+            )
+
+        artist_key = next(iter(artist_keys))
+        profile = self._artist_config.get_artist_by_key(artist_key)
+        if profile is None or not profile.is_active:
+            return None
+
+        support_count = self._historical_artist_support(
+            artist_key,
+            matches,
+        )
+        confidence: ConfidenceLevel = "medium"
+        if support_count >= 2:
+            confidence = "high"
+        reasoning = (
+            f"Suggested artist: {profile.display_name} based on routing rule "
+            f"'{highest_rules[0].name}' at priority {highest_priority}. "
+            f"Applied routing rules: {rule_names}."
+        )
+        if support_count:
+            reasoning = (
+                f"{reasoning} Historical support: {support_count} similar "
+                "cases assigned this artist."
+            )
+        return _ArtistRoutingDecision(
+            suggested_artist=profile.display_name,
+            confidence_level=confidence,
+            reasoning=reasoning,
+        )
+
+    def _valid_artist_rules(
+        self,
+        rules: list[RoutingRule],
+        extracted: TattooExtractionDraft,
+    ) -> list[RoutingRule]:
+        """Keep rules targeting active artists within configured size limits."""
+        valid: list[RoutingRule] = []
+        size_cm = parse_size_cm(extracted.size_estimate_cm)
+        for rule in rules:
+            profile = self._artist_config.get_artist_by_key(rule.artist_key)
+            if (
+                profile is None
+                or not profile.is_active
+                or not self._artist_accepts_size(profile, size_cm)
+            ):
+                LOGGER.warning(
+                    "Ignored routing rule %s for unavailable artist %s.",
+                    rule.name,
+                    rule.artist_key,
+                )
+                continue
+            valid.append(rule)
+        return valid
+
+    def _historical_artist_support(
+        self,
+        artist_key: str,
+        matches: list[tuple[float, DecisionHistoryExample]],
+    ) -> int:
+        """Count unique similar cases supporting one artist assignment."""
+        return len(
+            {
+                example.example_id
+                for _, example in matches
+                if example.final_artist_key == artist_key
+            }
+        )
+
+    def _rule_names(self, rules: list[RoutingRule]) -> str:
+        """Return a bounded audit label for matching routing rules."""
+        names = ", ".join(rule.name for rule in rules[:5])
+        if len(rules) > 5:
+            names = f"{names}, and {len(rules) - 5} more"
+        if len(names) > 220:
+            return f"{names[:217]}..."
+        return names
 
     def _suggest_from_config(
         self,
