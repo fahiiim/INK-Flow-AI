@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from decimal import Decimal
+from hashlib import sha256
 from typing import TYPE_CHECKING
 
 from .decision_schemas import (
@@ -96,7 +97,7 @@ class StudioDecisionEngine:
         return StudioLearningRecord(
             channel=context.channel,
             original_client_message=inquiry.current_message,
-            recent_chat_history=inquiry.recent_chat_history,
+            recent_chat_history=inquiry.recent_chat_history[-7:],
             reference_image_urls=inquiry.new_image_urls,
             decision=decision,
             human_feedback=feedback,
@@ -129,6 +130,36 @@ class StudioDecisionEngine:
             correction_reason=feedback.correction_reason,
             approved_price_range=feedback.approved_price_range,
         )
+
+    def ingest_new_record(self, record: StudioLearningRecord) -> None:
+        """Convert a completed learning record and add it to vector search.
+
+        Args:
+            record: Validated studio decision and its human feedback.
+
+        Raises:
+            RuntimeError: If this engine has no injected vector store.
+        """
+        if self._vector_store is None:
+            raise RuntimeError(
+                "A VectorStoreManager is required to ingest learning records."
+            )
+
+        example = self.build_history_example(
+            record=record,
+            example_id=self._build_learning_example_id(record),
+        )
+        self._vector_store.add_records([example])
+        # Backend developer will persist the raw record to PostgreSQL here.
+
+    def _build_learning_example_id(
+        self,
+        record: StudioLearningRecord,
+    ) -> str:
+        """Create a stable identifier for idempotent backend persistence."""
+        serialized_record = record.model_dump_json().encode("utf-8")
+        record_digest = sha256(serialized_record).hexdigest()[:24]
+        return f"learning-{record_digest}"
 
     def _rank_examples(
         self,
