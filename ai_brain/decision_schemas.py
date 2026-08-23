@@ -264,8 +264,23 @@ class StudioLearningRecord(StrictDecisionModel):
     """Serializable AI-only record for backend persistence."""
 
     channel: InquiryChannel
-    original_client_message: str = Field(min_length=1)
+    original_client_message: str
     recent_chat_history: list[Message] = Field(default_factory=list, max_length=7)
     reference_image_urls: list[str] = Field(default_factory=list)
     decision: StudioDecisionOutput
     human_feedback: StudioDecisionFeedback
+
+    @field_validator("reference_image_urls")
+    @classmethod
+    def normalize_reference_urls(cls, value: list[str]) -> list[str]:
+        """Remove empty reference URLs and normalize surrounding whitespace."""
+        return [url.strip() for url in value if url and url.strip()]
+
+    @model_validator(mode="after")
+    def require_message_or_reference(self) -> Self:
+        """Allow image-only learning records while rejecting empty evidence."""
+        if not self.original_client_message and not self.reference_image_urls:
+            raise ValueError(
+                "A learning record requires a client message or reference URL."
+            )
+        return self
