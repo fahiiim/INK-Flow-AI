@@ -1,5 +1,7 @@
 langchain==0.3.27
 langchain-openai==0.3.28
+faiss-cpu==1.15.0
+numpy==2.3.5
 pydantic==2.11.7
 python-dotenv==1.1.1
 httpx==0.28.1
