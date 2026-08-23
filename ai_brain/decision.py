@@ -7,6 +7,7 @@ from decimal import Decimal
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
+from .cold_start import COLD_START_THRESHOLD, ColdStartManager
 from .decision_schemas import (
     ArtistOption,
     ArtistSuggestion,
@@ -36,13 +37,15 @@ class StudioDecisionEngine:
         self,
         pricing_estimator: InternalPricingEstimator | None = None,
         vector_store: VectorStoreManager | None = None,
+        cold_start_manager: ColdStartManager | None = None,
     ) -> None:
         """Initialize deterministic decision and candidate-retrieval services.
 
         Args:
             pricing_estimator: Optional staff-only pricing implementation.
             vector_store: Optional FAISS manager containing verified examples.
-                When omitted, request-scoped history remains the fallback.
+                When omitted, cold start fails closed at zero records.
+            cold_start_manager: Optional safety-policy implementation.
         """
         self._pricing_estimator = (
             pricing_estimator
@@ -50,6 +53,11 @@ class StudioDecisionEngine:
             else InternalPricingEstimator()
         )
         self._vector_store = vector_store
+        self._cold_start_manager = (
+            cold_start_manager
+            if cold_start_manager is not None
+            else ColdStartManager()
+        )
 
     def decide(
         self,
@@ -58,6 +66,10 @@ class StudioDecisionEngine:
         context: StudioDecisionContext,
     ) -> StudioDecisionOutput:
         """Create staff-only artist, action, and price recommendations."""
+        cold_start_decision = self._build_cold_start_decision(analysis)
+        if cold_start_decision is not None:
+            return cold_start_decision
+
         ranked = self._rank_examples(analysis, context)
         artist, artist_ids = self._suggest_artist(analysis, context, ranked)
         estimate = self._pricing_estimator.estimate(
@@ -79,6 +91,62 @@ class StudioDecisionEngine:
             internal_price_estimate=estimate,
             applied_history_example_ids=applied_ids,
         )
+
+    def _build_cold_start_decision(
+        self,
+        analysis: AIExtractionOutput,
+    ) -> StudioDecisionOutput | None:
+        """Return a fail-closed manual decision until ten records exist."""
+        is_cold_start, record_count = self._cold_start_status()
+        if not is_cold_start:
+            return None
+
+        self._cold_start_manager.log_cold_start_warning()
+        reasoning = (
+            "Cold start mode active: requires manual artist assignment "
+            f"({record_count}/{COLD_START_THRESHOLD} records collected)."
+        )
+        analysis_payload = analysis.model_dump(mode="python")
+        analysis_payload.update(
+            {
+                "suggested_artist": "Unclear",
+                "confidence_level": "low",
+                "ai_reasoning": reasoning,
+                "risk_level": "high",
+            }
+        )
+        safe_analysis = AIExtractionOutput.model_validate(analysis_payload)
+        return StudioDecisionOutput(
+            analysis=safe_analysis,
+            artist_suggestion=ArtistSuggestion(
+                artist_key=None,
+                artist_name=None,
+                confidence_level="low",
+                reasoning=reasoning,
+                source="unresolved",
+            ),
+            suggested_next_action=NextAction(
+                action="artist_review",
+                reason=reasoning,
+                priority="high",
+                requires_human_review=True,
+            ),
+            internal_price_estimate=None,
+            applied_history_example_ids=[],
+        )
+
+    def _cold_start_status(self) -> tuple[bool, int]:
+        """Return cold-start state and its safe collected-record count."""
+        if self._vector_store is None:
+            return True, 0
+        if not self._cold_start_manager.check_cold_start(
+            self._vector_store
+        ):
+            return False, COLD_START_THRESHOLD
+        remaining = self._cold_start_manager.get_remaining_records_needed(
+            self._vector_store
+        )
+        return True, COLD_START_THRESHOLD - remaining
 
     def build_learning_record(
         self,
