@@ -1,0 +1,21 @@
+config_version: 1
+rules:
+  - name: Fine-line preference
+    condition: "style_tags contains 'fine-line' AND size < 10cm"
+    action: "suggest_artist: lana"
+    priority: 100
+
+  - name: Large watercolor
+    condition: "style_tags contains 'watercolor' AND size >= 20cm"
+    action: "suggest_artist: hoss"
+    priority: 90
+
+  - name: Calligraphy specialist
+    condition: "style_tags contains 'calligraphy'"
+    action: "suggest_artist: sliva"
+    priority: 80
+
+  - name: Small floral work
+    condition: "style_tags contains 'floral' AND size < 12cm"
+    action: "suggest_artist: sandra"
+    priority: 70
