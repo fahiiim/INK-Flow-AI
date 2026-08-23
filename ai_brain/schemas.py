@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StringConstraints,
     field_validator,
     model_validator,
 )
@@ -47,7 +48,14 @@ StyleTag = Literal[
     "unknown",
 ]
 
-SuggestedArtist = Literal["Nina", "Hoss", "Unclear"]
+SuggestedArtist = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=80,
+    ),
+]
 ConfidenceLevel = Literal["high", "medium", "low"]
 RiskLevel = Literal["low", "high"]
 VisualColorPreference = Literal["black-and-grey", "color", "unknown"]
@@ -198,7 +206,7 @@ class AIExtractionOutput(BaseModel):
         description="Color preference such as black-and-grey or full color.",
     )
     suggested_artist: SuggestedArtist = Field(
-        description="Artist recommendation: Nina, Hoss, or Unclear.",
+        description="Configured artist display name or Unclear.",
     )
     confidence_level: ConfidenceLevel = Field(
         description="Confidence in routing and extraction quality.",
