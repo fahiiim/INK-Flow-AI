@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from .decision_schemas import (
     ArtistOption,
@@ -20,17 +21,34 @@ from .decision_schemas import (
 from .pricing import InternalPricingEstimator, parse_size_cm
 from .schemas import AIExtractionOutput, ConfidenceLevel, TattooInquiryInput
 
+if TYPE_CHECKING:
+    from .vector_store import VectorStoreManager
+
 _PRICE_TERMS = ("price", "pricing", "cost", "quote", "how much")
+_VECTOR_SEARCH_TOP_K = 12
 
 
 class StudioDecisionEngine:
-    """Use request-scoped verified decisions without retaining state."""
+    """Use verified historical decisions to guide studio recommendations."""
 
     def __init__(
         self,
         pricing_estimator: InternalPricingEstimator | None = None,
+        vector_store: VectorStoreManager | None = None,
     ) -> None:
-        self._pricing_estimator = pricing_estimator or InternalPricingEstimator()
+        """Initialize deterministic decision and candidate-retrieval services.
+
+        Args:
+            pricing_estimator: Optional staff-only pricing implementation.
+            vector_store: Optional FAISS manager containing verified examples.
+                When omitted, request-scoped history remains the fallback.
+        """
+        self._pricing_estimator = (
+            pricing_estimator
+            if pricing_estimator is not None
+            else InternalPricingEstimator()
+        )
+        self._vector_store = vector_store
 
     def decide(
         self,
@@ -117,14 +135,67 @@ class StudioDecisionEngine:
         analysis: AIExtractionOutput,
         context: StudioDecisionContext,
     ) -> list[tuple[int, DecisionHistoryExample]]:
-        """Rank verified examples by structured inquiry similarity."""
-        ranked: list[tuple[int, DecisionHistoryExample]] = []
-        for example in context.decision_history:
+        """Rank vector-retrieved candidates with deterministic scoring."""
+        candidates = self._retrieve_candidate_examples(analysis, context)
+        ranked_candidates: list[
+            tuple[int, int, DecisionHistoryExample]
+        ] = []
+        for candidate_order, example in enumerate(candidates):
             score = self._example_score(example, analysis, context.channel)
             if score >= 3:
-                ranked.append((score, example))
-        ranked.sort(key=lambda item: (-item[0], item[1].example_id))
-        return ranked
+                ranked_candidates.append((score, candidate_order, example))
+        ranked_candidates.sort(
+            key=lambda item: (-item[0], item[1], item[2].example_id)
+        )
+        return [
+            (score, example)
+            for score, _, example in ranked_candidates
+        ]
+
+    def _retrieve_candidate_examples(
+        self,
+        analysis: AIExtractionOutput,
+        context: StudioDecisionContext,
+    ) -> list[DecisionHistoryExample]:
+        """Retrieve semantic candidates or use request-scoped history."""
+        if self._vector_store is None:
+            return list(context.decision_history)
+
+        query_text = self._build_vector_query(analysis)
+        matches = self._vector_store.search_similar_cases(
+            query_text,
+            top_k=_VECTOR_SEARCH_TOP_K,
+        )
+        if not matches:
+            return list(context.decision_history)
+        return self._deduplicate_examples(
+            [example for _, example in matches]
+        )
+
+    def _build_vector_query(self, analysis: AIExtractionOutput) -> str:
+        """Render current tattoo features in the indexed record format."""
+        styles = ", ".join(analysis.style_tags) or "unknown"
+        placement = analysis.placement or "unknown"
+        size = analysis.size_estimate_cm or "unknown"
+        color = analysis.color_preference or "unknown"
+        return (
+            f"Tattoo styles: {styles}. Placement: {placement}. "
+            f"Size in centimeters: {size}. Color preference: {color}."
+        )
+
+    def _deduplicate_examples(
+        self,
+        examples: list[DecisionHistoryExample],
+    ) -> list[DecisionHistoryExample]:
+        """Keep the strongest vector match for each persistent example ID."""
+        unique: list[DecisionHistoryExample] = []
+        seen_ids: set[str] = set()
+        for example in examples:
+            if example.example_id in seen_ids:
+                continue
+            seen_ids.add(example.example_id)
+            unique.append(example)
+        return unique
 
     def _example_score(
         self,
