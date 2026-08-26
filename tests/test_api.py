@@ -85,6 +85,15 @@ def test_liveness_endpoint() -> None:
     }
 
 
+def test_backend_compatible_health_endpoint() -> None:
+    """The backend-facing health alias reports service liveness."""
+    with TestClient(create_app()) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+
+
 def test_readiness_returns_503_for_missing_configuration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
