@@ -80,6 +80,16 @@ def check_liveness() -> HealthResponse:
 
 
 @health_router.get(
+    "",
+    response_model=HealthResponse,
+    summary="Check service health",
+)
+def check_health() -> HealthResponse:
+    """Provide the backend-compatible liveness endpoint."""
+    return check_liveness()
+
+
+@health_router.get(
     "/ready",
     response_model=HealthResponse,
     responses={
