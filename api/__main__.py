@@ -1,4 +1,4 @@
-"""Local development launcher for the FastAPI application."""
+"""Direct launcher for the FastAPI application."""
 
 import uvicorn
 
@@ -6,7 +6,7 @@ import uvicorn
 if __name__ == "__main__":
     uvicorn.run(
         "api.main:app",
-        host="10.10.28.89",
+        host="0.0.0.0",
         port=8001,
-        reload=True,
+        reload=False,
     )
