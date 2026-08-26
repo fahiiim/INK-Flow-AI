@@ -7,7 +7,7 @@ reply.
 
 ## Requirements
 
-- Windows with Python 3.12
+- Python 3.12
 - An OpenAI API key
 
 ## Run locally
@@ -61,3 +61,10 @@ python -m pytest -q
 ```
 
 Keep the `.env` file private and do not commit it to source control.
+
+## Production deployment
+
+The production container listens on `0.0.0.0:8001` inside Docker and joins the
+external `tattoo_hysteria_net` network. It does not publish port 8001 to the
+EC2 host. See [DEPLOYMENT.md](DEPLOYMENT.md) for the complete EC2, Compose,
+CI/CD, secret, rollback, and backend-verification instructions.
