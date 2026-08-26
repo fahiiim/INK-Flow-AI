@@ -62,6 +62,11 @@ jobs:
     timeout-minutes: 20
     environment: production
     steps:
+      - name: Check out exact release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
       - name: Configure SSH
         env:
           SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
@@ -76,6 +81,74 @@ jobs:
             > "${HOME}/.ssh/known_hosts"
           chmod 600 "${HOME}/.ssh/id_ed25519"
           chmod 600 "${HOME}/.ssh/known_hosts"
+
+      - name: Bootstrap exact EC2 checkout
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_SSH_PORT: ${{ secrets.EC2_SSH_PORT }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          test -n "${EC2_HOST}"
+          test -n "${EC2_SSH_PORT}"
+          test -n "${EC2_USER}"
+          bundle_path="${RUNNER_TEMP}/ink-flow-ai.bundle"
+          remote_bundle="/tmp/ink-flow-ai-${DEPLOY_SHA}.bundle"
+          git bundle create "${bundle_path}" HEAD
+          ssh \
+            -i "${HOME}/.ssh/id_ed25519" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -p "${EC2_SSH_PORT}" \
+            "${EC2_USER}@${EC2_HOST}" \
+            "sudo install -d -o '${EC2_USER}' -g '${EC2_USER}' \
+            -m 755 /opt/tattoo-hysteria-ai"
+          scp \
+            -i "${HOME}/.ssh/id_ed25519" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -P "${EC2_SSH_PORT}" \
+            "${bundle_path}" \
+            "${EC2_USER}@${EC2_HOST}:${remote_bundle}"
+          ssh \
+            -i "${HOME}/.ssh/id_ed25519" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -p "${EC2_SSH_PORT}" \
+            "${EC2_USER}@${EC2_HOST}" \
+            "BUNDLE_PATH='${remote_bundle}' DEPLOY_SHA='${DEPLOY_SHA}' \
+            bash -s" <<'REMOTE'
+          set -Eeuo pipefail
+          readonly app_directory="/opt/tattoo-hysteria-ai"
+          trap 'rm -f "${BUNDLE_PATH}"' EXIT
+          if [[ ! -d "${app_directory}/.git" ]]; then
+              if [[ -n "$(
+                  find "${app_directory}" \
+                      -mindepth 1 -maxdepth 1 -print -quit
+              )" ]]; then
+                  echo "AI directory exists but is not an empty Git checkout." >&2
+                  exit 1
+              fi
+              git clone "${BUNDLE_PATH}" "${app_directory}"
+          fi
+          cd "${app_directory}"
+          if [[ -n "$(git status --porcelain)" ]]; then
+              echo "AI checkout contains local changes." >&2
+              exit 1
+          fi
+          git fetch "${BUNDLE_PATH}" HEAD
+          git checkout --detach --force FETCH_HEAD
+          if [[ "$(git rev-parse HEAD)" != "${DEPLOY_SHA}" ]]; then
+              echo "EC2 checkout does not match the workflow commit." >&2
+              exit 1
+          fi
+          REMOTE
 
       - name: Provision production environment
         env:
@@ -128,13 +201,6 @@ jobs:
             "DEPLOY_SHA=${DEPLOY_SHA} bash -s" <<'REMOTE'
           set -Eeuo pipefail
           cd /opt/tattoo-hysteria-ai
-          if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
-              echo "Tracked deployment files contain local changes." >&2
-              exit 1
-          fi
-          git fetch origin main
-          git checkout main
-          git pull --ff-only origin main
           if [[ "$(git rev-parse HEAD)" != "${DEPLOY_SHA}" ]]; then
               echo "EC2 checkout does not match the workflow commit." >&2
               exit 1

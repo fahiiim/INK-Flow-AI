@@ -14,26 +14,14 @@ docker --version
 docker compose version
 ```
 
-Create the dedicated folder and shared network:
+GitHub Actions creates `/opt/tattoo-hysteria-ai`, transfers the exact Git commit
+as a bundle, and initializes or updates the checkout automatically. The EC2
+instance does not need a GitHub deploy key, personal access token, or manual
+repository clone.
 
-```bash
-sudo mkdir -p /opt/tattoo-hysteria-ai
-sudo chown -R ubuntu:ubuntu /opt/tattoo-hysteria-ai
-sudo chmod -R 755 /opt/tattoo-hysteria-ai
-
-docker network inspect tattoo_hysteria_net >/dev/null 2>&1 \
-  || docker network create tattoo_hysteria_net
-```
-
-Clone the repository. The final dot is required:
-
-```bash
-cd /opt/tattoo-hysteria-ai
-git clone https://github.com/fahiiim/INK-Flow-AI.git .
-```
-
-For a private repository, use a separate read-only GitHub deploy key on the
-EC2 instance. Do not reuse the GitHub Actions to EC2 SSH key.
+The scoped deployment script also creates `tattoo_hysteria_net` when it does not
+already exist. Docker and the Compose plugin remain server prerequisites because
+the existing backend stack already provides them.
 
 ## 2. Production environment file
 
@@ -56,14 +44,10 @@ the key. The Compose file loads it only at container runtime.
 The service does not send Telegram messages itself, so it does not need a
 Telegram bot token. It returns a Telegram-ready summary to Django.
 
-## 3. First manual deployment
+## 3. First deployment
 
-Run the same scoped script used by CI/CD:
-
-```bash
-cd /opt/tattoo-hysteria-ai
-bash scripts/deploy-production.sh
-```
+Push to `main`, or manually run the production workflow from GitHub Actions. The
+same workflow handles both the first deployment and later updates.
 
 The script performs these operations only for the AI service:
 
@@ -120,15 +104,12 @@ Pull requests to `main` run the complete tests and validate the Docker build.
 A push to `main`, or a manual workflow dispatch from `main`, additionally:
 
 1. Connects to EC2 over verified SSH.
-2. Creates the protected production `.env` from the GitHub environment secret.
-3. Refuses to overwrite tracked local changes in the deployment checkout.
-4. Fast-forwards the checkout to the exact workflow commit.
-5. Runs `scripts/deploy-production.sh`.
-6. Rolls back to the previous AI image if the new container is unhealthy.
-
-The EC2 checkout must already be able to read the GitHub repository. A public
-repository needs no Git credential. A private repository should use an EC2-side
-read-only deploy key.
+2. Creates the missing AI directory with ownership assigned to the SSH user.
+3. Transfers the exact commit as a Git bundle over the SSH connection.
+4. Initializes or updates the EC2 checkout without an EC2-side GitHub key.
+5. Creates the protected production `.env` from the GitHub environment secret.
+6. Runs `scripts/deploy-production.sh`.
+7. Rolls back to the previous AI image if the new container is unhealthy.
 
 ## 6. Backend connectivity checks
 

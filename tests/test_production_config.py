@@ -64,3 +64,15 @@ def test_workflow_provisions_environment_without_printing_secret() -> None:
     assert "mv /opt/tattoo-hysteria-ai/.env.next" in workflow
     assert 'echo "${OPENAI_API_KEY}"' not in workflow
 
+
+def test_workflow_bootstraps_checkout_without_ec2_github_credentials() -> None:
+    """CI sends the exact Git commit and creates the missing AI directory."""
+    workflow_path = PROJECT_ROOT / ".github" / "workflows" / "production.yml"
+    workflow = workflow_path.read_text(encoding="utf-8")
+
+    assert "git bundle create" in workflow
+    assert "sudo install -d" in workflow
+    assert "git clone \"${BUNDLE_PATH}\"" in workflow
+    assert "git fetch origin main" not in workflow
+    assert "git pull" not in workflow
+
