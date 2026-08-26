@@ -37,26 +37,21 @@ EC2 instance. Do not reuse the GitHub Actions to EC2 SSH key.
 
 ## 2. Production environment file
 
-Create the server-only environment file:
+GitHub Actions creates the server-only environment file automatically during
+every production deployment. Do not create it manually and do not commit it.
 
-```bash
-cd /opt/tattoo-hysteria-ai
-cp .env.example .env
-nano .env
-chmod 600 .env
-```
-
-The only required application credential is a project-scoped OpenAI API key:
+The workflow generates this file at `/opt/tattoo-hysteria-ai/.env`:
 
 ```env
-OPENAI_API_KEY=replace_with_your_project_api_key
+OPENAI_API_KEY=value_from_the_github_production_secret
 OPENAI_TEMPERATURE=0.0
 OPENAI_TIMEOUT_SECONDS=30
 OPENAI_MAX_RETRIES=2
 ```
 
-Do not add the OpenAI key to the repository or Docker image. The Compose file
-loads it at container runtime from `/opt/tattoo-hysteria-ai/.env`.
+The workflow transfers the key through encrypted SSH, writes a temporary file
+with restrictive permissions, and atomically replaces `.env`. It does not print
+the key. The Compose file loads it only at container runtime.
 
 The service does not send Telegram messages itself, so it does not need a
 Telegram bot token. It returns a Telegram-ready summary to Django.
@@ -92,7 +87,8 @@ Add these environment secrets:
 - `EC2_USER`: Usually `ubuntu`.
 - `EC2_SSH_PORT`: Usually `22`.
 - `EC2_SSH_PRIVATE_KEY`: Private deployment key used only by Actions.
- `EC2_SSH_KNOWN_HOSTS`: Verified SSH known-hosts entry for the EC2 host.-
+- `EC2_SSH_KNOWN_HOSTS`: Verified SSH known-hosts entry for the EC2 host.
+- `OPENAI_API_KEY`: Project-scoped production OpenAI API key.
 
 Generate a dedicated Actions deployment key on a trusted machine:
 
@@ -114,9 +110,9 @@ ssh-keyscan -H YOUR_EC2_HOST
 
 Store the complete output line in `EC2_SSH_KNOWN_HOSTS`.
 
-The workflow does not need `OPENAI_API_KEY`, AWS access keys, database
-credentials, Django secrets, or Telegram credentials. The OpenAI key stays in
-the EC2 `.env`. GitHub's automatic `GITHUB_TOKEN` is sufficient for checkout.
+The workflow does not need AWS access keys, database credentials, Django
+secrets, or Telegram credentials. GitHub's automatic `GITHUB_TOKEN` is
+sufficient for checkout.
 
 ## 5. CI/CD behavior
 
@@ -124,10 +120,11 @@ Pull requests to `main` run the complete tests and validate the Docker build.
 A push to `main`, or a manual workflow dispatch from `main`, additionally:
 
 1. Connects to EC2 over verified SSH.
-2. Refuses to overwrite tracked local changes in the deployment checkout.
-3. Fast-forwards the checkout to the exact workflow commit.
-4. Runs `scripts/deploy-production.sh`.
-5. Rolls back to the previous AI image if the new container is unhealthy.
+2. Creates the protected production `.env` from the GitHub environment secret.
+3. Refuses to overwrite tracked local changes in the deployment checkout.
+4. Fast-forwards the checkout to the exact workflow commit.
+5. Runs `scripts/deploy-production.sh`.
+6. Rolls back to the previous AI image if the new container is unhealthy.
 
 The EC2 checkout must already be able to read the GitHub repository. A public
 repository needs no Git credential. A private repository should use an EC2-side

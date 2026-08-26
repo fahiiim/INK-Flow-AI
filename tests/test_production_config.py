@@ -52,3 +52,15 @@ def test_deployment_script_is_scoped_and_avoids_global_cleanup() -> None:
     assert "docker system prune" not in script
     assert "/opt/tattoo-hysteria-backend" not in script
 
+
+def test_workflow_provisions_environment_without_printing_secret() -> None:
+    """CI writes the server environment atomically through encrypted SSH."""
+    workflow_path = PROJECT_ROOT / ".github" / "workflows" / "production.yml"
+    workflow = workflow_path.read_text(encoding="utf-8")
+
+    assert "OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}" in workflow
+    assert "cat > /opt/tattoo-hysteria-ai/.env.next" in workflow
+    assert "chmod 600 /opt/tattoo-hysteria-ai/.env.next" in workflow
+    assert "mv /opt/tattoo-hysteria-ai/.env.next" in workflow
+    assert 'echo "${OPENAI_API_KEY}"' not in workflow
+

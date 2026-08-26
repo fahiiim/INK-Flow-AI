@@ -77,6 +77,36 @@ jobs:
           chmod 600 "${HOME}/.ssh/id_ed25519"
           chmod 600 "${HOME}/.ssh/known_hosts"
 
+      - name: Provision production environment
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_SSH_PORT: ${{ secrets.EC2_SSH_PORT }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          test -n "${EC2_HOST}"
+          test -n "${EC2_SSH_PORT}"
+          test -n "${EC2_USER}"
+          test -n "${OPENAI_API_KEY}"
+          {
+            printf 'OPENAI_API_KEY=%s\n' "${OPENAI_API_KEY}"
+            printf 'OPENAI_TEMPERATURE=0.0\n'
+            printf 'OPENAI_TIMEOUT_SECONDS=30\n'
+            printf 'OPENAI_MAX_RETRIES=2\n'
+          } | ssh \
+            -i "${HOME}/.ssh/id_ed25519" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -p "${EC2_SSH_PORT}" \
+            "${EC2_USER}@${EC2_HOST}" \
+            "set -eu; umask 077; \
+            cat > /opt/tattoo-hysteria-ai/.env.next; \
+            chmod 600 /opt/tattoo-hysteria-ai/.env.next; \
+            mv /opt/tattoo-hysteria-ai/.env.next \
+            /opt/tattoo-hysteria-ai/.env"
+
       - name: Update the AI service only
         env:
           DEPLOY_SHA: ${{ github.sha }}
