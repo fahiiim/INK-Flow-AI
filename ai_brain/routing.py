@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+import re
 from collections import Counter
 from decimal import Decimal
-import logging
 from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -56,6 +57,8 @@ _HIGH_RISK_TERMS = (
     "quote",
     "how much",
     "booking",
+    "book",
+    "appointment",
     "book an appointment",
     "complaint",
     "refund",
@@ -185,6 +188,8 @@ class TattooRouter:
             missing_information=extracted.missing_information,
             risk_level=risk_level,
             draft_reply=draft_reply,
+            auto_reply_allowed=risk_level == "low",
+            telegram_review_required=risk_level == "high",
         )
 
     def _generate_draft_reply(
@@ -245,9 +250,8 @@ class TattooRouter:
             return _ArtistRoutingDecision(
                 suggested_artist="Unclear",
                 confidence_level="low",
-                reasoning=(
-                    "Cold start mode: manual assignment required "
-                    f"({record_count}/{COLD_START_THRESHOLD} records)."
+                reasoning=self._cold_start_manager.build_status_message(
+                    record_count
                 ),
                 cold_start=True,
             )
@@ -262,21 +266,17 @@ class TattooRouter:
         if rule_decision is not None:
             return rule_decision
         if matches:
-            return self._suggest_from_history(matches)
+            return self._suggest_from_history(matches, extracted)
         return self._suggest_from_config(extracted)
 
     def _cold_start_status(self) -> tuple[bool, int]:
         """Return cold-start state and a safe collected-record count."""
         if self._vector_store is None:
             return True, 0
-        if not self._cold_start_manager.check_cold_start(
-            self._vector_store
-        ):
-            return False, COLD_START_THRESHOLD
-        remaining = self._cold_start_manager.get_remaining_records_needed(
+        record_count = self._cold_start_manager.get_record_count(
             self._vector_store
         )
-        return True, COLD_START_THRESHOLD - remaining
+        return record_count < COLD_START_THRESHOLD, record_count
 
     def _search_similar_cases(
         self,
@@ -308,10 +308,12 @@ class TattooRouter:
     def _suggest_from_history(
         self,
         matches: list[tuple[float, DecisionHistoryExample]],
+        extracted: TattooExtractionDraft,
     ) -> _ArtistRoutingDecision:
-        """Choose the most frequent active artist in similar cases."""
+        """Choose the most frequent eligible artist in similar cases."""
         assignments: Counter[str] = Counter()
         seen_example_ids: set[str] = set()
+        size_cm = parse_size_cm(extracted.size_estimate_cm)
         for _, example in matches:
             if example.example_id in seen_example_ids:
                 continue
@@ -319,13 +321,22 @@ class TattooRouter:
             artist_key = example.final_artist_key
             if (
                 artist_key is not None
-                and self._artist_config.validate_artist_assignment(artist_key)
+                and self._artist_config.validate_artist_assignment(
+                    artist_key,
+                    extracted.style_tags,
+                )
             ):
-                assignments[artist_key] += 1
+                profile = self._artist_config.get_artist_by_key(artist_key)
+                if (
+                    profile is not None
+                    and self._artist_accepts_size(profile, size_cm)
+                ):
+                    assignments[artist_key] += 1
 
         if not assignments:
             return self._manual_history_decision(
-                "Similar cases contain no active artist assignments."
+                "Similar cases contain no active artist assignments "
+                "compatible with the detected style and size."
             )
 
         best_count = max(assignments.values())
@@ -435,7 +446,10 @@ class TattooRouter:
             profile = self._artist_config.get_artist_by_key(rule.artist_key)
             if (
                 profile is None
-                or not profile.is_active
+                or not self._artist_config.validate_artist_assignment(
+                    rule.artist_key,
+                    extracted.style_tags,
+                )
                 or not self._artist_accepts_size(profile, size_cm)
             ):
                 LOGGER.warning(
@@ -560,16 +574,30 @@ class TattooRouter:
         ).lower()
 
         # High-risk intent always takes precedence over intake completeness.
-        if any(term in searchable for term in _HIGH_RISK_TERMS):
+        if self._contains_high_risk_intent(searchable):
             return "high"
 
-        # Standard missing intake fields are safe for conversational follow-up.
+        # Too many unresolved critical fields require staff-led intake.
         missing = set(extracted.missing_information)
+        if len(missing) > 2:
+            return "high"
+
+        # One or two standard fields are safe for conversational follow-up.
         if missing.issubset(_ALL_STANDARD_INTAKE_MISSING):
             return "low"
 
         # Fail closed if a future anomalous missing value bypasses validation.
         return "high"
+
+    def _contains_high_risk_intent(self, searchable: str) -> bool:
+        """Match high-risk terms as words or complete phrases."""
+        return any(
+            re.search(
+                rf"(?<!\w){re.escape(term)}(?!\w)",
+                searchable,
+            )
+            for term in _HIGH_RISK_TERMS
+        )
 
     def _routing_llm_output(
         self,
