@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from threading import RLock
 from typing import Any, Self
@@ -176,10 +177,28 @@ class ArtistConfigManager:
                     return artist.model_copy(deep=True)
         return None
 
-    def validate_artist_assignment(self, artist_key: str) -> bool:
-        """Return whether an artist exists and is currently active."""
+    def validate_artist_assignment(
+        self,
+        artist_key: str,
+        style_tags: Sequence[StyleTag] | None = None,
+    ) -> bool:
+        """Return whether an artist is active and supports detected styles.
+
+        Args:
+            artist_key: Stable, case-insensitive artist identifier.
+            style_tags: Optional detected styles. When provided, at least one
+                meaningful style must match an artist specialty.
+        """
         artist = self.get_artist_by_key(artist_key)
-        return artist is not None and artist.is_active
+        if artist is None or not artist.is_active:
+            return False
+        if style_tags is None:
+            return True
+
+        detected_styles = set(style_tags).difference({"unknown"})
+        if not detected_styles:
+            return False
+        return bool(detected_styles.intersection(artist.specialties))
 
     def upsert_artist(self, artist: ArtistProfile) -> ArtistProfile:
         """Add a new artist or replace an existing profile by stable key."""
