@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+import re
 from collections import defaultdict
 from decimal import Decimal
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
+from .artist_config import ArtistConfigManager
 from .cold_start import COLD_START_THRESHOLD, ColdStartManager
 from .decision_schemas import (
     ArtistOption,
@@ -26,6 +29,8 @@ from .schemas import AIExtractionOutput, ConfidenceLevel, TattooInquiryInput
 if TYPE_CHECKING:
     from .vector_store import VectorStoreManager
 
+LOGGER = logging.getLogger(__name__)
+
 _PRICE_TERMS = ("price", "pricing", "cost", "quote", "how much")
 _VECTOR_SEARCH_TOP_K = 12
 
@@ -38,6 +43,7 @@ class StudioDecisionEngine:
         pricing_estimator: InternalPricingEstimator | None = None,
         vector_store: VectorStoreManager | None = None,
         cold_start_manager: ColdStartManager | None = None,
+        artist_config_manager: ArtistConfigManager | None = None,
     ) -> None:
         """Initialize deterministic decision and candidate-retrieval services.
 
@@ -46,6 +52,8 @@ class StudioDecisionEngine:
             vector_store: Optional FAISS manager containing verified examples.
                 When omitted, cold start fails closed at zero records.
             cold_start_manager: Optional safety-policy implementation.
+            artist_config_manager: Optional studio artist catalog used to
+                validate active status and detected-style compatibility.
         """
         self._pricing_estimator = (
             pricing_estimator
@@ -57,6 +65,11 @@ class StudioDecisionEngine:
             cold_start_manager
             if cold_start_manager is not None
             else ColdStartManager()
+        )
+        self._artist_config = (
+            artist_config_manager
+            if artist_config_manager is not None
+            else ArtistConfigManager()
         )
 
     def decide(
@@ -76,6 +89,14 @@ class StudioDecisionEngine:
             analysis=analysis,
             context=context,
             artist_key=artist.artist_key,
+            history_examples=[example for _, example in ranked],
+        )
+        safe_analysis = self._protect_internal_price(
+            analysis=analysis,
+            estimate=estimate,
+            disclosure_approved=(
+                context.human_approved_price_disclosure
+            ),
         )
         action, action_ids = self._suggest_action(
             analysis=analysis,
@@ -85,12 +106,46 @@ class StudioDecisionEngine:
         )
         applied_ids = sorted(set(artist_ids).union(action_ids))
         return StudioDecisionOutput(
-            analysis=analysis,
+            analysis=safe_analysis,
             artist_suggestion=artist,
             suggested_next_action=action,
             internal_price_estimate=estimate,
             applied_history_example_ids=applied_ids,
         )
+
+    def _protect_internal_price(
+        self,
+        analysis: AIExtractionOutput,
+        estimate: InternalPriceEstimate | None,
+        disclosure_approved: bool,
+    ) -> AIExtractionOutput:
+        """Replace drafts that expose an unapproved internal estimate."""
+        if estimate is None or disclosure_approved:
+            return analysis
+        forbidden_amounts = {
+            self._format_price_amount(estimate.price_range.minimum),
+            self._format_price_amount(estimate.price_range.maximum),
+        }
+        if not any(
+            self._draft_contains_amount(analysis.draft_reply, amount)
+            for amount in forbidden_amounts
+        ):
+            return analysis
+
+        payload = analysis.model_dump(mode="python")
+        payload["draft_reply"] = (
+            "A staff member will review your request and reply shortly."
+        )
+        return AIExtractionOutput.model_validate(payload)
+
+    def _format_price_amount(self, amount: Decimal) -> str:
+        """Format a decimal for deterministic draft-disclosure checks."""
+        return format(amount.normalize(), "f")
+
+    def _draft_contains_amount(self, draft: str, amount: str) -> bool:
+        """Detect a complete numeric amount without substring collisions."""
+        pattern = rf"(?<![\d.]){re.escape(amount)}(?![\d.])"
+        return bool(re.search(pattern, draft))
 
     def _build_cold_start_decision(
         self,
@@ -102,9 +157,8 @@ class StudioDecisionEngine:
             return None
 
         self._cold_start_manager.log_cold_start_warning()
-        reasoning = (
-            "Cold start mode active: requires manual artist assignment "
-            f"({record_count}/{COLD_START_THRESHOLD} records collected)."
+        reasoning = self._cold_start_manager.build_status_message(
+            record_count
         )
         analysis_payload = analysis.model_dump(mode="python")
         analysis_payload.update(
@@ -139,14 +193,10 @@ class StudioDecisionEngine:
         """Return cold-start state and its safe collected-record count."""
         if self._vector_store is None:
             return True, 0
-        if not self._cold_start_manager.check_cold_start(
-            self._vector_store
-        ):
-            return False, COLD_START_THRESHOLD
-        remaining = self._cold_start_manager.get_remaining_records_needed(
+        record_count = self._cold_start_manager.get_record_count(
             self._vector_store
         )
-        return True, COLD_START_THRESHOLD - remaining
+        return record_count < COLD_START_THRESHOLD, record_count
 
     def build_learning_record(
         self,
@@ -170,7 +220,7 @@ class StudioDecisionEngine:
             decision=decision,
             human_feedback=feedback,
         )
-    
+
     def build_history_example(
         self,
         record: StudioLearningRecord,
@@ -218,7 +268,7 @@ class StudioDecisionEngine:
             example_id=self._build_learning_example_id(record),
         )
         self._vector_store.add_records([example])
-        # Backend developer will persist the raw record to PostgreSQL here.
+        # Backend developer persists this record to PostgreSQL.
 
     def _build_learning_example_id(
         self,
@@ -261,10 +311,14 @@ class StudioDecisionEngine:
             return list(context.decision_history)
 
         query_text = self._build_vector_query(analysis)
-        matches = self._vector_store.search_similar_cases(
-            query_text,
-            top_k=_VECTOR_SEARCH_TOP_K,
-        )
+        try:
+            matches = self._vector_store.search_similar_cases(
+                query_text,
+                top_k=_VECTOR_SEARCH_TOP_K,
+            )
+        except Exception as exc:  # pragma: no cover - defensive branch
+            LOGGER.warning("Decision vector search failed: %s", exc)
+            return list(context.decision_history)
         if not matches:
             return list(context.decision_history)
         return self._deduplicate_examples(
@@ -342,7 +396,14 @@ class StudioDecisionEngine:
         ranked: list[tuple[int, DecisionHistoryExample]],
     ) -> tuple[ArtistSuggestion, list[str]]:
         """Prefer verified final assignments when evidence is unambiguous."""
-        artist_map = {item.key: item for item in context.artist_options}
+        artist_map = {
+            item.key: item
+            for item in context.artist_options
+            if self._artist_config.validate_artist_assignment(
+                item.key,
+                analysis.style_tags,
+            )
+        }
         votes: dict[str, int] = defaultdict(int)
         support: dict[str, list[str]] = defaultdict(list)
         for score, example in ranked:
@@ -383,9 +444,14 @@ class StudioDecisionEngine:
         """Map legacy routing output into the supplied artist catalog."""
         if analysis.suggested_artist != "Unclear":
             for artist in options:
-                if artist.display_name.casefold() == (
+                name_matches = artist.display_name.casefold() == (
                     analysis.suggested_artist.casefold()
-                ):
+                )
+                is_eligible = self._artist_config.validate_artist_assignment(
+                    artist.key,
+                    analysis.style_tags,
+                )
+                if name_matches and is_eligible:
                     return ArtistSuggestion(
                         artist_key=artist.key,
                         artist_name=artist.display_name,
