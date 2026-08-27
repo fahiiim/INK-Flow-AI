@@ -46,8 +46,11 @@ DRAFT_REPLY_SYSTEM_PROMPT = (
     "You are a client concierge for a premium tattoo studio. "
     "Write in a professional, warm, natural tone and keep the reply concise. "
     "Use extracted facts exactly and never invent client details. "
-    "NEVER output a bulleted list and NEVER show a field whose value is blank, "
-    "missing, unknown, Unknown, none, or not provided. "
+    "NEVER output a bulleted list or any robotic numbered or label-value "
+    "intake list. "
+    "NEVER write labels such as Style:, Placement:, Size:, or Color:. "
+    "NEVER show a field whose value is blank, missing, unknown, Unknown, "
+    "None, N/A, or not provided. Omit unavailable details completely. "
     "Summarize only known Style, Placement, Size, and Color details in one "
     "natural sentence, for example: Got it, a 15cm black calligraphy piece "
     "on your back! "
@@ -96,12 +99,12 @@ def build_extraction_human_prompt(
         image_urls=image_urls,
     )
     context_payload = {
-        "existing_db_state": dict(existing_db_state or {}),
+        "current_message": resolved_message,
         "recent_chat_history": [
             message.model_dump(mode="json")
             for message in recent_chat_history
         ],
-        "current_message": resolved_message,
+        "existing_db_state": dict(existing_db_state or {}),
         "new_image_urls": resolved_image_urls,
         "detected_style_tags": list(style_tags),
         "visual_color_preference": visual_color_preference,
@@ -218,8 +221,9 @@ def build_draft_reply_human_prompt(
     return (
         "Create one client-facing draft reply from this validated context:\n"
         f"{serialized_payload}\n\n"
-        "Never show blank or Unknown values. Use one natural summary sentence. "
-        "Ask for no more than two missing items. If confirmation already "
+        "Never show blank, Unknown, None, or N/A values. Do not use bullets, "
+        "numbering, or field labels. Use one natural summary sentence. Ask "
+        "for no more than two critical missing items. If confirmation already "
         "exists, continue with the next missing item instead.\n"
         "Follow this response schema exactly:\n"
         f"{format_instructions}"
