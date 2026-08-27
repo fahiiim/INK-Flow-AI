@@ -1,0 +1,4 @@
+# Add only pricing ranges approved by studio management.
+# Request-scoped rules with the same rule_id override configured rules.
+config_version: 1
+rules: []
