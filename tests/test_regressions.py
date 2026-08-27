@@ -76,6 +76,8 @@ def test_router_flags_high_risk_keywords_before_missing_information() -> None:
     assert result.suggested_artist == "Unclear"
     assert result.confidence_level == "low"
     assert "studio team review" in result.draft_reply
+    assert result.auto_reply_allowed is False
+    assert result.telegram_review_required is True
 
 
 def test_router_flags_price_question_in_user_chat_history() -> None:
@@ -123,8 +125,8 @@ def test_router_flags_how_much_in_current_message() -> None:
     assert result.risk_level == "high"
 
 
-def test_router_keeps_all_standard_missing_information_low_risk() -> None:
-    """The complete standard intake checklist is safe for auto-reply."""
+def test_router_flags_more_than_two_missing_fields_high_risk() -> None:
+    """Three or more unresolved critical fields require manual review."""
     draft = TattooExtractionDraft(
         tattoo_idea="A tattoo idea without intake details",
         style_tags=["unknown"],
@@ -145,10 +147,9 @@ def test_router_keeps_all_standard_missing_information_low_risk() -> None:
         current_message="I want to discuss a tattoo idea.",
     )
 
-    assert result.risk_level == "low"
-    assert "studio team review" not in result.draft_reply
-    assert "reference image" in result.draft_reply
-    assert result.draft_reply.count("?") == 1
+    assert result.risk_level == "high"
+    assert result.auto_reply_allowed is False
+    assert result.telegram_review_required is True
 
 
 def test_router_keeps_basic_missing_information_low_risk() -> None:
@@ -165,12 +166,46 @@ def test_router_keeps_basic_missing_information_low_risk() -> None:
     result = _router_with_failing_llm().route(draft)
 
     assert result.risk_level == "low"
+    assert result.auto_reply_allowed is True
+    assert result.telegram_review_required is False
     assert result.suggested_artist == "Sandra"
     assert result.confidence_level == "medium"
     assert "black-and-grey minimal and floral tattoo" in result.draft_reply
     assert "Does that sound right" in result.draft_reply
     assert "- Style:" not in result.draft_reply
     assert "Unknown" not in result.draft_reply
+
+
+@pytest.mark.parametrize(
+    "current_message",
+    [
+        "Can you give me a price?",
+        "I want to book this tattoo.",
+        "I need to make a complaint.",
+        "Please process my refund.",
+    ],
+)
+def test_required_high_risk_intents_disable_auto_reply(
+    current_message: str,
+) -> None:
+    """Required sensitive intents always enter Telegram review mode."""
+    draft = TattooExtractionDraft(
+        tattoo_idea="Fine-line floral tattoo",
+        style_tags=["fine-line"],
+        placement="inner wrist",
+        size_estimate_cm="8cm",
+        color_preference="black-and-grey",
+        missing_information=[],
+    )
+
+    result = _router_with_failing_llm().route(
+        draft,
+        current_message=current_message,
+    )
+
+    assert result.risk_level == "high"
+    assert result.auto_reply_allowed is False
+    assert result.telegram_review_required is True
 
 
 def test_chat_model_forces_zero_temperature(
