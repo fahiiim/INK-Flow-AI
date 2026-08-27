@@ -167,6 +167,8 @@ class StudioDecisionEngine:
                 "confidence_level": "low",
                 "ai_reasoning": reasoning,
                 "risk_level": "high",
+                "auto_reply_allowed": False,
+                "telegram_review_required": True,
             }
         )
         safe_analysis = AIExtractionOutput.model_validate(analysis_payload)
