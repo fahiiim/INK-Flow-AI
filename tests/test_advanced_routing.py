@@ -158,7 +158,7 @@ def _router(
 
 
 @pytest.mark.parametrize("record_count", range(10))
-def test_cold_start_mode(record_count: int) -> None:
+def test_cold_start_enforcement(record_count: int) -> None:
     """Every record count below ten forces manual high-risk handling."""
     records = _history_records(["hoss"] * record_count)
     vector_store = FakeVectorStore(records=records, matches=[])
