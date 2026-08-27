@@ -89,6 +89,57 @@ class StubRouter:
         return self._output
 
 
+def test_automation_pause_returns_before_ai_calls() -> None:
+    """Paused conversations return the exact hold response immediately."""
+    vision = StubVisionAnalyzer(tags=["fine-line"])
+    extraction = StubTextExtractor(
+        draft=TattooExtractionDraft(
+            tattoo_idea="Unused draft",
+            style_tags=["fine-line"],
+            placement="wrist",
+            size_estimate_cm="5cm",
+            color_preference="black-and-grey",
+            missing_information=[],
+        )
+    )
+    router = StubRouter(
+        output=AIExtractionOutput(
+            tattoo_idea="Unused output",
+            style_tags=["fine-line"],
+            placement="wrist",
+            size_estimate_cm="5cm",
+            color_preference="black-and-grey",
+            suggested_artist="Nina",
+            confidence_level="high",
+            ai_reasoning="Unused routing output.",
+            missing_information=[],
+            risk_level="low",
+            draft_reply="Unused reply.",
+        )
+    )
+    brain = StudioAIBrain(
+        vision_analyzer=vision,
+        text_extractor=extraction,
+        router=router,
+    )
+
+    result = brain.process_inquiry(
+        current_message="I want to change my booking.",
+        new_image_urls=["https://example.com/reference.jpg"],
+        existing_db_state={"automation_paused": True},
+        recent_chat_history=[],
+    )
+
+    assert result.suggested_artist == "Unclear"
+    assert result.risk_level == "high"
+    assert result.draft_reply == "A staff member will reply to you shortly."
+    assert result.auto_reply_allowed is False
+    assert result.telegram_review_required is True
+    assert vision.calls == []
+    assert extraction.calls == []
+    assert router.calls == []
+
+
 def test_process_inquiry_low_risk_fine_line_request() -> None:
     """Validate low-risk fine-line flow and orchestration calls."""
     vision = StubVisionAnalyzer(tags=["fine-line", "minimal"])
