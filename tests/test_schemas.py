@@ -103,3 +103,18 @@ def test_output_rejects_extra_fields() -> None:
 
     with pytest.raises(ValidationError):
         AIExtractionOutput.model_validate(payload)
+
+
+def test_high_risk_output_rejects_auto_reply_delivery() -> None:
+    """The output contract cannot mark a high-risk draft as sendable."""
+    payload = _valid_output_payload()
+    payload.update(
+        {
+            "risk_level": "high",
+            "auto_reply_allowed": True,
+            "telegram_review_required": True,
+        }
+    )
+
+    with pytest.raises(ValidationError, match="cannot allow auto-replies"):
+        AIExtractionOutput.model_validate(payload)
