@@ -222,5 +222,32 @@ class AIExtractionOutput(BaseModel):
         description="Low or high risk triage label for this inquiry.",
     )
     draft_reply: str = Field(
-        description="Polite suggested response that staff can send to client.",
+        description="Draft text requiring the delivery controls below.",
     )
+    auto_reply_allowed: bool = Field(
+        description="Whether backend automation may send the draft directly.",
+    )
+    telegram_review_required: bool = Field(
+        description="Whether the draft must be routed to staff in Telegram.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_delivery_controls(cls, value: Any) -> Any:
+        """Derive safe delivery defaults from the declared risk level."""
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        is_high_risk = payload.get("risk_level") == "high"
+        payload.setdefault("auto_reply_allowed", not is_high_risk)
+        payload.setdefault("telegram_review_required", is_high_risk)
+        return payload
+
+    @model_validator(mode="after")
+    def enforce_high_risk_delivery(self) -> Self:
+        """Forbid high-risk outputs from entering the auto-reply channel."""
+        if self.risk_level == "high" and self.auto_reply_allowed:
+            raise ValueError("High-risk drafts cannot allow auto-replies.")
+        if self.risk_level == "high" and not self.telegram_review_required:
+            raise ValueError("High-risk drafts require Telegram review.")
+        return self
