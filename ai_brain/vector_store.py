@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
@@ -15,6 +16,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .config import get_settings
 from .decision_schemas import DecisionHistoryExample
+
+LOGGER = logging.getLogger(__name__)
 
 EMBEDDING_MODEL_NAME = "text-embedding-3-small"
 DEFAULT_EMBEDDING_DIMENSION = 1536
@@ -102,6 +105,11 @@ class VectorStoreManager:
         """Return an immutable snapshot of indexed decision records."""
         return tuple(self._records)
 
+    @property
+    def record_count(self) -> int:
+        """Return the number of unique verified records in the index."""
+        return len(self._records)
+
     def add_records(self, records: list[DecisionHistoryExample]) -> None:
         """Embed and add verified decision examples to the FAISS index.
 
@@ -111,16 +119,27 @@ class VectorStoreManager:
 
         Raises:
             ValueError: If the embedding response has an invalid shape, count,
-                dimension, or contains a zero-length vector.
+                dimension, contains a zero-length vector, or reuses an example
+                identifier for different content.
+            RuntimeError: If the embedding provider cannot process records.
         """
-        if not records:
+        new_records = self._select_new_records(records)
+        if not new_records:
             return
 
-        texts = [decision_history_to_text(record) for record in records]
-        raw_embeddings = self._embedding_model.embed_documents(texts)
-        embeddings = self._prepare_embeddings(raw_embeddings, len(records))
+        texts = [decision_history_to_text(record) for record in new_records]
+        try:
+            raw_embeddings = self._embedding_model.embed_documents(texts)
+        except Exception as exc:
+            raise RuntimeError(
+                "Unable to generate embeddings for learning records."
+            ) from exc
+        embeddings = self._prepare_embeddings(
+            raw_embeddings,
+            len(new_records),
+        )
         self._index.add(embeddings)
-        self._records.extend(records)
+        self._records.extend(new_records)
 
     def search_similar_cases(
         self,
@@ -140,11 +159,11 @@ class VectorStoreManager:
         Returns:
             Ordered ``(similarity, record)`` pairs, highest similarity first.
             An empty index returns an empty list without calling the embedding
-            provider.
+            provider. Embedding-provider and FAISS failures also return an
+            empty list so routing can use its deterministic fallback.
 
         Raises:
-            ValueError: If the query is blank, ``top_k`` is not positive, or
-                the query embedding is invalid.
+            ValueError: If the query is blank or ``top_k`` is not positive.
             RuntimeError: If FAISS returns an unmapped record identifier.
         """
         normalized_query = query_text.strip()
@@ -155,14 +174,51 @@ class VectorStoreManager:
         if self._index.ntotal == 0:
             return []
 
-        raw_embedding = self._embedding_model.embed_query(normalized_query)
-        query_embedding = self._prepare_embeddings([raw_embedding], 1)
+        try:
+            raw_embedding = self._embedding_model.embed_query(
+                normalized_query
+            )
+            query_embedding = self._prepare_embeddings([raw_embedding], 1)
+        except Exception as exc:  # pragma: no cover - provider-dependent
+            LOGGER.warning("Vector query embedding failed: %s", exc)
+            return []
         result_count = min(top_k, int(self._index.ntotal))
-        scores, record_ids = self._index.search(
-            query_embedding,
-            result_count,
-        )
+        try:
+            scores, record_ids = self._index.search(
+                query_embedding,
+                result_count,
+            )
+        except Exception as exc:  # pragma: no cover - FAISS defensive branch
+            LOGGER.warning("FAISS similarity search failed: %s", exc)
+            return []
         return self._map_search_results(scores[0], record_ids[0])
+
+    def _select_new_records(
+        self,
+        records: Sequence[DecisionHistoryExample],
+    ) -> list[DecisionHistoryExample]:
+        """Return unique additions and reject conflicting identifier reuse.
+
+        Exact repeats are treated as idempotent retries. Reusing an existing
+        identifier for different content is rejected before any embedding or
+        index mutation occurs.
+        """
+        known_records = {
+            record.example_id: record for record in self._records
+        }
+        selected: list[DecisionHistoryExample] = []
+        for record in records:
+            existing = known_records.get(record.example_id)
+            if existing is not None:
+                if existing != record:
+                    raise ValueError(
+                        "Decision example ID is already mapped to different "
+                        f"content: {record.example_id}."
+                    )
+                continue
+            known_records[record.example_id] = record
+            selected.append(record)
+        return selected
 
     def save_index(self, path: str) -> None:
         """Persist the FAISS index and its record mapping to disk.
@@ -269,7 +325,19 @@ class VectorStoreManager:
 
     def _validate_index_state(self) -> None:
         """Validate the injected index and its optional record mapping."""
+        self._validate_unique_record_ids(self._records)
         self._validate_candidate_index(self._index, len(self._records))
+
+    def _validate_unique_record_ids(
+        self,
+        records: Sequence[DecisionHistoryExample],
+    ) -> None:
+        """Reject record collections containing duplicate identifiers."""
+        example_ids = [record.example_id for record in records]
+        if len(example_ids) != len(set(example_ids)):
+            raise ValueError(
+                "Decision history records must use unique example IDs."
+            )
 
     def _validate_candidate_index(
         self,
@@ -290,6 +358,7 @@ class VectorStoreManager:
 
     def _validate_loaded_metadata(self, metadata: _IndexMetadata) -> None:
         """Reject metadata created for another vector space."""
+        self._validate_unique_record_ids(metadata.records)
         if metadata.embedding_model != self._embedding_model_name:
             raise ValueError(
                 "Persisted embedding model does not match this manager."
