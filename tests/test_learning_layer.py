@@ -139,7 +139,7 @@ def test_vector_store_add_and_search() -> None:
     assert results[0][1].example_id == "fine-line-case"
 
 
-def test_empty_vector_store_skips_query_embedding() -> None:
+def test_vector_search_fallback() -> None:
     """Searching an empty index returns before invoking the provider."""
     embeddings = DummyEmbeddings()
     manager = _manager(embeddings)
