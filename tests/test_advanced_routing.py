@@ -171,11 +171,21 @@ def test_cold_start_mode(record_count: int) -> None:
         current_message="I want a traditional eagle tattoo.",
         context=_decision_context(),
     )
+    routed = _router(vector_store).route(
+        extracted=_draft(),
+        current_message="I want a traditional eagle tattoo.",
+    )
+    expected_reasoning = (
+        "Cold start mode: manual assignment required "
+        f"({record_count}/10 records)."
+    )
 
     assert result.analysis.suggested_artist == "Unclear"
     assert result.analysis.risk_level == "high"
-    assert "cold start mode" in result.analysis.ai_reasoning.casefold()
-    assert f"{record_count}/10 records collected" in result.analysis.ai_reasoning
+    assert result.analysis.ai_reasoning == expected_reasoning
+    assert routed.suggested_artist == "Unclear"
+    assert routed.risk_level == "high"
+    assert routed.ai_reasoning == expected_reasoning
     assert result.artist_suggestion.artist_key is None
     assert result.suggested_next_action.action == "artist_review"
     assert result.suggested_next_action.requires_human_review is True
@@ -201,6 +211,27 @@ def test_post_cold_start_routing() -> None:
     assert len(vector_store.search_calls) == 1
 
 
+def test_history_artist_must_match_detected_style() -> None:
+    """Historical votes cannot bypass configured artist specialties."""
+    draft = TattooExtractionDraft(
+        tattoo_idea="Fine-line flower",
+        style_tags=["fine-line"],
+        placement="inner forearm",
+        size_estimate_cm="8cm",
+        color_preference="black-and-grey",
+        missing_information=[],
+    )
+    records = _history_records(["hoss"] * 10, style="fine-line")
+    matches = [(0.99, record) for record in records]
+
+    result = _router(
+        FakeVectorStore(records=records, matches=matches)
+    ).route(extracted=draft)
+
+    assert result.suggested_artist == "Unclear"
+    assert "no active artist assignments" in result.ai_reasoning.casefold()
+
+
 def test_artist_config_validation() -> None:
     """Default profiles are valid and inactive artists are never suggested."""
     manager = ArtistConfigManager()
@@ -215,6 +246,14 @@ def test_artist_config_validation() -> None:
     }
     assert all(artist.display_name for artist in artists)
     assert all(artist.specialties for artist in artists)
+    assert manager.validate_artist_assignment(
+        "hoss",
+        ["traditional"],
+    )
+    assert not manager.validate_artist_assignment(
+        "hoss",
+        ["fine-line"],
+    )
     manager.set_artist_active("hoss", False)
 
     records = _history_records(["hoss"] * 10)
