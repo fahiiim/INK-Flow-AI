@@ -24,10 +24,12 @@ class DummyEmbeddings(Embeddings):
     """Return deterministic semantic vectors without calling OpenAI."""
 
     def __init__(self) -> None:
+        self.document_calls = 0
         self.query_calls = 0
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """Embed indexed documents using their explicit style names."""
+        self.document_calls += 1
         return [self._vector_for_text(text) for text in texts]
 
     def embed_query(self, text: str) -> list[float]:
@@ -45,6 +47,14 @@ class DummyEmbeddings(Embeddings):
         if "traditional" in normalized:
             return [0.0, 0.0, 1.0]
         return [1.0, 1.0, 1.0]
+
+
+class FailingQueryEmbeddings(DummyEmbeddings):
+    """Embed documents normally but fail query embedding requests."""
+
+    def embed_query(self, text: str) -> list[float]:
+        """Simulate an unavailable embedding provider during retrieval."""
+        raise RuntimeError("simulated embedding provider failure")
 
 
 def _history_example(
@@ -138,6 +148,44 @@ def test_empty_vector_store_skips_query_embedding() -> None:
     assert embeddings.query_calls == 0
 
 
+def test_vector_store_add_is_idempotent_by_example_id() -> None:
+    """Backend retries do not inflate the verified history count."""
+    embeddings = DummyEmbeddings()
+    manager = _manager(embeddings)
+    records = _records()
+
+    manager.add_records(records)
+    manager.add_records(records)
+
+    assert manager.record_count == 3
+    assert manager.index.ntotal == 3
+    assert embeddings.document_calls == 1
+
+
+def test_vector_store_rejects_conflicting_example_id() -> None:
+    """One persistent identifier cannot represent two learning records."""
+    manager = _manager(DummyEmbeddings())
+    original = _records()[0]
+    conflicting = original.model_copy(
+        update={"final_artist_key": "hoss"}
+    )
+    manager.add_records([original])
+
+    with pytest.raises(ValueError, match="already mapped"):
+        manager.add_records([conflicting])
+
+    assert manager.record_count == 1
+    assert manager.index.ntotal == 1
+
+
+def test_vector_search_provider_failure_returns_empty_results() -> None:
+    """A query embedding outage safely behaves like no vector matches."""
+    manager = _manager(FailingQueryEmbeddings())
+    manager.add_records(_records())
+
+    assert manager.search_similar_cases("fine-line tattoo") == []
+
+
 def test_vector_store_persistence_round_trip(tmp_path: Path) -> None:
     """A saved index restores both vectors and their Pydantic records."""
     index_path = tmp_path / "learning.faiss"
@@ -174,3 +222,23 @@ def test_decision_engine_uses_vector_search() -> None:
     assert "fine-line" in query_text
     assert result.artist_suggestion.artist_key == "nina"
     assert result.artist_suggestion.source == "verified_history"
+
+
+def test_decision_engine_handles_vector_search_failure() -> None:
+    """Decision generation falls back safely when vector retrieval fails."""
+    vector_store = Mock(spec=VectorStoreManager)
+    vector_store.record_count = 12
+    vector_store.search_similar_cases.side_effect = RuntimeError(
+        "simulated FAISS failure"
+    )
+    engine = StudioDecisionEngine(vector_store=vector_store)
+
+    result = engine.decide(
+        analysis=_analysis(),
+        current_message="I want a fine-line floral tattoo.",
+        context=_context(),
+    )
+
+    vector_store.search_similar_cases.assert_called_once()
+    assert result.artist_suggestion.artist_key is None
+    assert result.artist_suggestion.source == "unresolved"
