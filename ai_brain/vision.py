@@ -13,6 +13,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
 
+from .errors import AnalysisPipelineError
 from .llm import get_chat_model
 from .prompts import VISION_SYSTEM_PROMPT
 from .schemas import (
@@ -25,6 +26,7 @@ from .schemas import (
 LOGGER = logging.getLogger(__name__)
 
 _STYLE_TAG_SET = set(STYLE_TAG_OPTIONS)
+
 
 class TattooVisionAnalyzer:
     """Analyze reference images for normalized tattoo style and color."""
@@ -115,13 +117,16 @@ class TattooVisionAnalyzer:
                 }
             )
 
-        response = self._llm.invoke(
-            [
-                SystemMessage(content=VISION_SYSTEM_PROMPT),
-                HumanMessage(content=content),
-            ]
-        )
-        return self._coerce_content_to_text(response.content)
+        try:
+            response = self._llm.invoke(
+                [
+                    SystemMessage(content=VISION_SYSTEM_PROMPT),
+                    HumanMessage(content=content),
+                ]
+            )
+            return self._coerce_content_to_text(response.content)
+        except Exception as exc:
+            raise AnalysisPipelineError("Vision model analysis failed.") from exc
 
     def _coerce_content_to_text(self, content: Any) -> str:
         """Normalize LangChain response content to plain text."""
