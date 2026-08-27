@@ -54,6 +54,7 @@ def test_human_prompt_includes_details_and_recent_confirmation() -> None:
     assert '"content": "Yes, those details are correct."' in prompt
     assert '"preferred_date": "2026-08-15"' in prompt
     assert '"missing_information": [' in prompt
-    assert "Never show blank or Unknown values." in prompt
-    assert "Ask for no more than two missing items." in prompt
+    assert "Never show blank, Unknown, None, or N/A values." in prompt
+    assert "Ask for no more than two critical missing items." in prompt
+    assert "Do not use bullets, numbering, or field labels." in prompt
     assert "Return draft_reply as a JSON string field." in prompt
