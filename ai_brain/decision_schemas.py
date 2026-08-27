@@ -159,6 +159,12 @@ class StudioDecisionContext(StrictDecisionModel):
         default_factory=list,
         max_length=50,
     )
+    human_approved_price_disclosure: bool = Field(
+        default=False,
+        description=(
+            "Explicit staff approval allowing a reviewed price in the draft."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_references(self) -> Self:
@@ -220,6 +226,7 @@ class InternalPriceEstimate(StrictDecisionModel):
     reasoning: str = Field(min_length=1, max_length=500)
     applied_rule_ids: list[str] = Field(default_factory=list, max_length=10)
     applied_example_ids: list[str] = Field(default_factory=list, max_length=12)
+    internal_only: Literal[True] = True
     visibility: Literal["internal_only"] = "internal_only"
     requires_consultation: bool = False
     requires_human_approval: Literal[True] = True
