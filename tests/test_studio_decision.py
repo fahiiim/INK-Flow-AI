@@ -197,6 +197,75 @@ def test_approved_history_can_supply_internal_price_without_rule() -> None:
     assert estimate.applied_example_ids == ["fine-line-lana-001"]
 
 
+def test_faiss_history_can_supply_internal_price() -> None:
+    """Retrieved approved prices are used without request-scoped history."""
+    vector_store = Mock(spec=VectorStoreManager)
+    vector_store.record_count = 10
+    vector_store.search_similar_cases.return_value = [
+        (0.99, _history_example())
+    ]
+    context = StudioDecisionContext(
+        channel="whatsapp",
+        artist_options=[
+            ArtistOption(key="nina", display_name="Nina"),
+            ArtistOption(key="lana", display_name="Lana"),
+        ],
+    )
+
+    result = StudioDecisionEngine(
+        vector_store=cast(VectorStoreManager, vector_store)
+    ).decide(
+        analysis=_analysis(),
+        current_message="I want a fine-line wrist tattoo.",
+        context=context,
+    )
+
+    estimate = result.internal_price_estimate
+    assert estimate is not None
+    assert estimate.source == "approved_history"
+    assert estimate.internal_only is True
+    assert estimate.applied_example_ids == ["fine-line-lana-001"]
+
+
+def test_unapproved_internal_price_is_removed_from_draft() -> None:
+    """An internal estimate cannot leak through a client-facing draft."""
+    analysis = _analysis().model_copy(
+        update={"draft_reply": "The estimated price is EUR 130 to 170."}
+    )
+
+    result = _warm_decision_engine().decide(
+        analysis=analysis,
+        current_message="I want a fine-line wrist tattoo.",
+        context=_context(),
+    )
+
+    estimate = result.internal_price_estimate
+    assert estimate is not None
+    assert estimate.internal_only is True
+    assert result.analysis.draft_reply == (
+        "A staff member will review your request and reply shortly."
+    )
+
+
+def test_human_approved_price_disclosure_preserves_reviewed_draft() -> None:
+    """Explicit staff approval permits an already reviewed price message."""
+    reviewed_draft = "The studio-approved estimate is EUR 130 to 170."
+    analysis = _analysis().model_copy(
+        update={"draft_reply": reviewed_draft}
+    )
+    context = _context().model_copy(
+        update={"human_approved_price_disclosure": True}
+    )
+
+    result = _warm_decision_engine().decide(
+        analysis=analysis,
+        current_message="I want a fine-line wrist tattoo.",
+        context=context,
+    )
+
+    assert result.analysis.draft_reply == reviewed_draft
+
+
 def test_pricing_request_requires_review_and_context_does_not_leak() -> None:
     """Prices remain internal and direct price questions require review."""
     engine = _warm_decision_engine()
