@@ -28,6 +28,29 @@ class StaticExtractionLLM:
         return SimpleNamespace(content=content)
 
 
+class StaleExtractionLLM:
+    """Return stale values to verify deterministic latest-turn correction."""
+
+    def invoke(self, messages: object) -> SimpleNamespace:
+        """Return valid JSON that incorrectly repeats database values."""
+        content = (
+            '{"tattoo_idea":"traditional dragon",'
+            '"placement":"inner wrist",'
+            '"size_estimate_cm":"5cm",'
+            '"color_preference":"black-and-grey",'
+            '"missing_information":[]}'
+        )
+        return SimpleNamespace(content=content)
+
+
+class FailingExtractionLLM:
+    """Raise a provider failure to exercise deterministic context fallback."""
+
+    def invoke(self, messages: object) -> SimpleNamespace:
+        """Simulate an unavailable extraction provider."""
+        raise RuntimeError("simulated extraction failure")
+
+
 def test_current_message_overrides_database_and_state_fills_blanks() -> None:
     """Current extraction wins while non-conflicting DB values are retained."""
     extractor = TattooTextExtractor(
@@ -74,3 +97,60 @@ def test_extractor_accepts_image_only_message() -> None:
 
     assert result.style_tags == ["fine-line"]
     assert "reference images" not in result.missing_information
+
+
+def test_current_message_deterministically_overrides_stale_model_values() -> None:
+    """Explicit current facts override stale model, history, and DB values."""
+    extractor = TattooTextExtractor(
+        llm=cast(ChatOpenAI, StaleExtractionLLM()),
+    )
+    history = [
+        Message(
+            role="user",
+            content="I wanted a 5cm fine-line wrist tattoo in black ink.",
+        ),
+    ]
+
+    result = extractor.extract(
+        current_message=(
+            "Actually make it a 12cm traditional piece on my forearm in "
+            "full color instead of fine-line."
+        ),
+        style_tags=["fine-line"],
+        existing_db_state={
+            "size": "5cm",
+            "placement": "inner wrist",
+            "color_preference": "black-and-grey",
+        },
+        recent_chat_history=history,
+    )
+
+    assert result.size_estimate_cm == "12cm"
+    assert result.placement == "forearm"
+    assert result.color_preference == "color"
+    assert result.style_tags == ["traditional"]
+
+
+def test_provider_failure_uses_current_then_history_then_database() -> None:
+    """Fallback synthesis preserves source order without raising an error."""
+    extractor = TattooTextExtractor(
+        llm=cast(ChatOpenAI, FailingExtractionLLM()),
+    )
+    history = [
+        Message(role="user", content="I would like it on my shoulder."),
+    ]
+
+    result = extractor.extract(
+        current_message="Actually make it 10cm and full color.",
+        style_tags=["geometric"],
+        existing_db_state={
+            "size": "5cm",
+            "placement": "inner wrist",
+            "color_preference": "black-and-grey",
+        },
+        recent_chat_history=history,
+    )
+
+    assert result.size_estimate_cm == "10cm"
+    assert result.placement == "shoulder"
+    assert result.color_preference == "color"
