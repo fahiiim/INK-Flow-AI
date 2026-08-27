@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
+from typing import Any, Self
+
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .decision_schemas import (
     DecisionHistoryExample,
@@ -15,6 +21,55 @@ from .decision_schemas import (
 from .schemas import AIExtractionOutput, ConfidenceLevel
 
 _SIZE_PATTERN = re.compile(r"\d+(?:\.\d+)?")
+DEFAULT_PRICING_CONFIG_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "config"
+    / "pricing_rules.yaml"
+)
+
+
+class PricingConfigError(ValueError):
+    """Raised when studio pricing configuration cannot be loaded."""
+
+
+class StudioPricingConfig(BaseModel):
+    """Validated deterministic pricing policy for one studio deployment."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
+
+    config_version: int = Field(default=1, ge=1)
+    rules: list[PricingRule] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_unique_rule_ids(self) -> Self:
+        """Reject ambiguous duplicate pricing-rule identifiers."""
+        rule_ids = [rule.rule_id for rule in self.rules]
+        if len(rule_ids) != len(set(rule_ids)):
+            raise ValueError("Pricing rule IDs must be unique.")
+        return self
+
+
+def load_pricing_config(
+    path: str | Path = DEFAULT_PRICING_CONFIG_PATH,
+) -> StudioPricingConfig:
+    """Load and validate a studio pricing policy from safe YAML."""
+    resolved_path = Path(path).expanduser().resolve()
+    if not resolved_path.is_file():
+        raise PricingConfigError(
+            f"Pricing config file not found: {resolved_path}"
+        )
+    try:
+        payload: Any = yaml.safe_load(
+            resolved_path.read_text(encoding="utf-8")
+        )
+        return StudioPricingConfig.model_validate(payload)
+    except (OSError, ValidationError, yaml.YAMLError) as exc:
+        raise PricingConfigError(
+            f"Invalid pricing configuration: {resolved_path}"
+        ) from exc
 
 
 def parse_size_cm(value: str) -> Decimal | None:
@@ -31,28 +86,112 @@ def parse_size_cm(value: str) -> Decimal | None:
 class InternalPricingEstimator:
     """Calculate internal estimates without inventing unsupported prices."""
 
+    def __init__(
+        self,
+        pricing_config: StudioPricingConfig | None = None,
+        config_path: str | Path | None = None,
+    ) -> None:
+        """Initialize the estimator from injected or file-backed rules.
+
+        Args:
+            pricing_config: Optional validated configuration for dependency
+                injection and deterministic tests.
+            config_path: Optional YAML path. It cannot be combined with an
+                injected configuration.
+        """
+        if pricing_config is not None and config_path is not None:
+            raise ValueError(
+                "pricing_config and config_path cannot both be provided."
+            )
+        self._config = (
+            pricing_config.model_copy(deep=True)
+            if pricing_config is not None
+            else load_pricing_config(
+                config_path or DEFAULT_PRICING_CONFIG_PATH
+            )
+        )
+
     def estimate(
         self,
         analysis: AIExtractionOutput,
         context: StudioDecisionContext,
         artist_key: str | None,
+        history_examples: Sequence[DecisionHistoryExample] | None = None,
     ) -> InternalPriceEstimate | None:
-        """Use authoritative rules first, then verified approved examples."""
+        """Use configured rules first, then verified approved examples."""
         size_cm = parse_size_cm(analysis.size_estimate_cm)
         rule_estimate = self._estimate_from_rules(
             analysis=analysis,
-            rules=context.pricing_rules,
+            rules=self._resolve_rules(context.pricing_rules),
+            artist_key=artist_key,
+            size_cm=size_cm,
+        )
+        history_estimate = self._estimate_from_history(
+            analysis=analysis,
+            examples=(
+                context.decision_history
+                if history_examples is None
+                else history_examples
+            ),
+            channel=context.channel,
             artist_key=artist_key,
             size_cm=size_cm,
         )
         if rule_estimate is not None:
+            return self._combine_rule_and_history(
+                rule_estimate,
+                history_estimate,
+            )
+        return history_estimate
+
+    def _combine_rule_and_history(
+        self,
+        rule_estimate: InternalPriceEstimate,
+        history_estimate: InternalPriceEstimate | None,
+    ) -> InternalPriceEstimate:
+        """Keep the rule range and attach compatible historical evidence."""
+        if history_estimate is None:
             return rule_estimate
-        return self._estimate_from_history(
-            analysis=analysis,
-            context=context,
-            artist_key=artist_key,
-            size_cm=size_cm,
+
+        rule_range = rule_estimate.price_range
+        history_range = history_estimate.price_range
+        currency_matches = rule_range.currency == history_range.currency
+        ranges_overlap = (
+            currency_matches
+            and history_range.maximum >= rule_range.minimum
+            and history_range.minimum <= rule_range.maximum
         )
+        payload = rule_estimate.model_dump(mode="python")
+        payload["applied_example_ids"] = (
+            history_estimate.applied_example_ids
+        )
+        if ranges_overlap:
+            payload["confidence_level"] = "high"
+            payload["reasoning"] = (
+                "Matched an authoritative studio pricing rule supported by "
+                "similar approved historical prices."
+            )
+        else:
+            payload["confidence_level"] = "medium"
+            payload["requires_consultation"] = True
+            payload["reasoning"] = (
+                "The authoritative pricing rule conflicts with similar "
+                "approved history and requires staff review."
+            )
+        return InternalPriceEstimate.model_validate(payload)
+
+    def _resolve_rules(
+        self,
+        request_rules: Sequence[PricingRule],
+    ) -> list[PricingRule]:
+        """Merge configured rules with request-scoped rule overrides."""
+        merged = {
+            rule.rule_id: rule.model_copy(deep=True)
+            for rule in self._config.rules
+        }
+        for rule in request_rules:
+            merged[rule.rule_id] = rule.model_copy(deep=True)
+        return list(merged.values())
 
     def _estimate_from_rules(
         self,
@@ -146,19 +285,20 @@ class InternalPricingEstimator:
     def _estimate_from_history(
         self,
         analysis: AIExtractionOutput,
-        context: StudioDecisionContext,
+        examples: Sequence[DecisionHistoryExample],
+        channel: str,
         artist_key: str | None,
         size_cm: Decimal | None,
     ) -> InternalPriceEstimate | None:
         """Build a conservative range from best matching approved examples."""
         ranked: list[tuple[int, DecisionHistoryExample]] = []
-        for example in context.decision_history:
+        for example in examples:
             if example.approved_price_range is None:
                 continue
             score = self._history_score(
                 example=example,
                 analysis=analysis,
-                channel=context.channel,
+                channel=channel,
                 artist_key=artist_key,
                 size_cm=size_cm,
             )
