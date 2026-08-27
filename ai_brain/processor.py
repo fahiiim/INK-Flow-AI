@@ -8,7 +8,9 @@ from pydantic import ValidationError
 
 from .decision import StudioDecisionEngine
 from .decision_schemas import (
+    ArtistSuggestion,
     DecisionHistoryExample,
+    NextAction,
     StudioDecisionContext,
     StudioDecisionFeedback,
     StudioDecisionOutput,
@@ -19,6 +21,8 @@ from .extraction import TattooTextExtractor
 from .routing import TattooRouter
 from .schemas import AIExtractionOutput, Message, TattooInquiryInput
 from .vision import TattooVisionAnalyzer
+
+_AUTOMATION_PAUSED_DRAFT = "A staff member will reply to you shortly."
 
 
 class StudioAIBrain:
@@ -59,6 +63,8 @@ class StudioAIBrain:
             text=text,
             image_urls=image_urls,
         )
+        if self._is_automation_paused(inquiry):
+            return self._build_automation_paused_output(inquiry)
 
         vision_output = self.vision_analyzer.analyze_images(
             inquiry.new_image_urls
@@ -90,10 +96,64 @@ class StudioAIBrain:
             existing_db_state=inquiry.existing_db_state,
             recent_chat_history=inquiry.recent_chat_history,
         )
+        if self._is_automation_paused(inquiry):
+            return self._build_automation_paused_decision(analysis)
         return self.decision_engine.decide(
             analysis=analysis,
             current_message=inquiry.current_message,
             context=context,
+        )
+
+    def _is_automation_paused(self, inquiry: TattooInquiryInput) -> bool:
+        """Return whether backend state explicitly disables automation."""
+        return inquiry.existing_db_state.get("automation_paused") is True
+
+    def _build_automation_paused_output(
+        self,
+        inquiry: TattooInquiryInput,
+    ) -> AIExtractionOutput:
+        """Return a deterministic hold response without calling AI services."""
+        return AIExtractionOutput(
+            tattoo_idea=inquiry.current_message,
+            style_tags=["unknown"],
+            placement="",
+            size_estimate_cm="",
+            color_preference="",
+            suggested_artist="Unclear",
+            confidence_level="low",
+            ai_reasoning=(
+                "Automation paused: manual staff response required."
+            ),
+            missing_information=[],
+            risk_level="high",
+            draft_reply=_AUTOMATION_PAUSED_DRAFT,
+            auto_reply_allowed=False,
+            telegram_review_required=True,
+        )
+
+    def _build_automation_paused_decision(
+        self,
+        analysis: AIExtractionOutput,
+    ) -> StudioDecisionOutput:
+        """Return a staff-only decision without retrieval or pricing work."""
+        reasoning = "Automation paused: manual staff response required."
+        return StudioDecisionOutput(
+            analysis=analysis,
+            artist_suggestion=ArtistSuggestion(
+                artist_key=None,
+                artist_name=None,
+                confidence_level="low",
+                reasoning=reasoning,
+                source="unresolved",
+            ),
+            suggested_next_action=NextAction(
+                action="artist_review",
+                reason=reasoning,
+                priority="high",
+                requires_human_review=True,
+            ),
+            internal_price_estimate=None,
+            applied_history_example_ids=[],
         )
 
     def build_learning_record(
