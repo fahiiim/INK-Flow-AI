@@ -181,6 +181,7 @@ class TattooRouter:
         if message_source == "outlook":
             return self._reply_composer.compose_outlook_email(
                 extracted=extracted,
+                existing_db_state=existing_db_state,
             )
 
         try:
