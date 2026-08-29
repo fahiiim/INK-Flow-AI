@@ -46,6 +46,22 @@ def test_hybrid_input_accepts_only_canonical_fields() -> None:
     )
     assert outlook_inquiry.message_source == "outlook"
 
+    nested_outlook_inquiry = TattooInquiryInput(
+        current_message="I would like to discuss a tattoo.",
+        existing_db_state={
+            "lead": {"source": "outlook"},
+            "intake": {"source": "outlook"},
+        },
+    )
+    assert nested_outlook_inquiry.message_source == "outlook"
+
+    explicit_whatsapp_inquiry = TattooInquiryInput(
+        current_message="I would like to discuss a tattoo.",
+        existing_db_state={"intake": {"source": "outlook"}},
+        message_source="whatsapp",
+    )
+    assert explicit_whatsapp_inquiry.message_source == "whatsapp"
+
     with pytest.raises(ValidationError):
         TattooInquiryInput.model_validate(
             {
