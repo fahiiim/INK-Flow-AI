@@ -50,8 +50,8 @@ def _router_with_failing_llm() -> TattooRouter:
     )
 
 
-def test_router_flags_high_risk_keywords_before_missing_information() -> None:
-    """Sensitive intent remains high risk despite standard missing fields."""
+def test_missing_information_keeps_sensitive_intent_low_risk() -> None:
+    """Missing intake fields keep the request low risk regardless of intent."""
     draft = TattooExtractionDraft(
         tattoo_idea="Client requests a price quote and complex design advice",
         style_tags=["unknown"],
@@ -72,16 +72,16 @@ def test_router_flags_high_risk_keywords_before_missing_information() -> None:
         current_message="I need complex design advice and a price quote.",
     )
 
-    assert result.risk_level == "high"
+    assert result.risk_level == "low"
     assert result.suggested_artist == "Unclear"
     assert result.confidence_level == "low"
-    assert "studio team review" in result.draft_reply
-    assert result.auto_reply_allowed is False
-    assert result.telegram_review_required is True
+    assert "reference image" in result.draft_reply
+    assert result.auto_reply_allowed is True
+    assert result.telegram_review_required is False
 
 
-def test_router_flags_price_question_in_user_chat_history() -> None:
-    """Price intent in user history remains high with neutral extraction data."""
+def test_missing_information_keeps_price_history_low_risk() -> None:
+    """Price history does not override an incomplete intake's low risk."""
     draft = TattooExtractionDraft(
         tattoo_idea="20cm black floral tattoo",
         style_tags=["floral"],
@@ -103,11 +103,11 @@ def test_router_flags_price_question_in_user_chat_history() -> None:
         ],
     )
 
-    assert result.risk_level == "high"
+    assert result.risk_level == "low"
 
 
-def test_router_flags_how_much_in_current_message() -> None:
-    """Common price wording in the latest client message is high risk."""
+def test_missing_information_keeps_current_price_question_low_risk() -> None:
+    """A current price question remains low risk while fields are missing."""
     draft = TattooExtractionDraft(
         tattoo_idea="20cm black floral tattoo",
         style_tags=["floral"],
@@ -122,11 +122,11 @@ def test_router_flags_how_much_in_current_message() -> None:
         current_message="How much would this tattoo cost?",
     )
 
-    assert result.risk_level == "high"
+    assert result.risk_level == "low"
 
 
-def test_router_flags_more_than_two_missing_fields_high_risk() -> None:
-    """Three or more unresolved critical fields require manual review."""
+def test_many_missing_fields_remain_low_risk() -> None:
+    """Any non-empty missing-information list produces low risk."""
     draft = TattooExtractionDraft(
         tattoo_idea="A tattoo idea without intake details",
         style_tags=["unknown"],
@@ -147,9 +147,9 @@ def test_router_flags_more_than_two_missing_fields_high_risk() -> None:
         current_message="I want to discuss a tattoo idea.",
     )
 
-    assert result.risk_level == "high"
-    assert result.auto_reply_allowed is False
-    assert result.telegram_review_required is True
+    assert result.risk_level == "low"
+    assert result.auto_reply_allowed is True
+    assert result.telegram_review_required is False
 
 
 def test_router_keeps_basic_missing_information_low_risk() -> None:
@@ -174,6 +174,47 @@ def test_router_keeps_basic_missing_information_low_risk() -> None:
     assert "Does that sound right" in result.draft_reply
     assert "- Style:" not in result.draft_reply
     assert "Unknown" not in result.draft_reply
+
+
+def test_complete_intake_is_high_risk_without_sensitive_intent() -> None:
+    """A request with no missing information always requires high-risk review."""
+    draft = TattooExtractionDraft(
+        tattoo_idea="Fine-line floral tattoo",
+        style_tags=["fine-line"],
+        placement="inner wrist",
+        size_estimate_cm="8cm",
+        color_preference="black-and-grey",
+        missing_information=[],
+    )
+
+    result = _router_with_failing_llm().route(
+        draft,
+        current_message="These are all the details for my tattoo.",
+    )
+
+    assert result.risk_level == "high"
+    assert result.auto_reply_allowed is False
+    assert result.telegram_review_required is True
+
+
+def test_cold_start_does_not_force_incomplete_intake_to_high_risk() -> None:
+    """Cold-start artist routing does not override missing-based risk."""
+    router = TattooRouter(llm=cast(ChatOpenAI, FailingLLM()))
+    draft = TattooExtractionDraft(
+        tattoo_idea="Floral tattoo",
+        style_tags=["floral"],
+        placement="",
+        size_estimate_cm="",
+        color_preference="",
+        missing_information=["size in cm", "placement"],
+    )
+
+    result = router.route(draft, current_message="I want a floral tattoo.")
+
+    assert result.suggested_artist == "Unclear"
+    assert result.risk_level == "low"
+    assert result.auto_reply_allowed is True
+    assert result.telegram_review_required is False
 
 
 @pytest.mark.parametrize(

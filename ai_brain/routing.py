@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from collections import Counter
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -41,31 +40,6 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 
 _VECTOR_SEARCH_TOP_K = 12
-_ALL_STANDARD_INTAKE_MISSING = {
-    "size in cm",
-    "placement",
-    "reference images",
-    "tattoo style",
-    "color preference",
-    "preferred date",
-}
-
-_HIGH_RISK_TERMS = (
-    "price",
-    "pricing",
-    "cost",
-    "quote",
-    "how much",
-    "booking",
-    "book",
-    "appointment",
-    "book an appointment",
-    "complaint",
-    "refund",
-    "bad experience",
-    "design this for me",
-    "complex design advice",
-)
 
 
 class _RoutingLLMOutput(BaseModel):
@@ -148,13 +122,11 @@ class TattooRouter:
         history = recent_chat_history or []
         db_state = existing_db_state or {}
         artist_decision = self._suggest_artist(extracted)
-        risk_level: RiskLevel = "high"
-        if not artist_decision.cold_start:
-            risk_level = self._classify_risk(
-                extracted=extracted,
-                current_message=current_message,
-                recent_chat_history=history,
-            )
+        risk_level = self._classify_risk(
+            extracted=extracted,
+            current_message=current_message,
+            recent_chat_history=history,
+        )
 
         llm_output = self._routing_llm_output(
             artist_decision=artist_decision,
@@ -556,48 +528,8 @@ class TattooRouter:
         current_message: str = "",
         recent_chat_history: list[Message] | None = None,
     ) -> RiskLevel:
-        """Classify risk from extracted data and user conversation context."""
-        user_history = [
-            message.content
-            for message in recent_chat_history or []
-            if message.role == "user"
-        ]
-        searchable = " ".join(
-            [
-                current_message,
-                *user_history,
-                extracted.tattoo_idea,
-                extracted.placement,
-                extracted.size_estimate_cm,
-                extracted.color_preference,
-            ]
-        ).lower()
-
-        # High-risk intent always takes precedence over intake completeness.
-        if self._contains_high_risk_intent(searchable):
-            return "high"
-
-        # Too many unresolved critical fields require staff-led intake.
-        missing = set(extracted.missing_information)
-        if len(missing) > 2:
-            return "high"
-
-        # One or two standard fields are safe for conversational follow-up.
-        if missing.issubset(_ALL_STANDARD_INTAKE_MISSING):
-            return "low"
-
-        # Fail closed if a future anomalous missing value bypasses validation.
-        return "high"
-
-    def _contains_high_risk_intent(self, searchable: str) -> bool:
-        """Match high-risk terms as words or complete phrases."""
-        return any(
-            re.search(
-                rf"(?<!\w){re.escape(term)}(?!\w)",
-                searchable,
-            )
-            for term in _HIGH_RISK_TERMS
-        )
+        """Classify complete intake as high risk and incomplete intake as low."""
+        return "high" if not extracted.missing_information else "low"
 
     def _routing_llm_output(
         self,
