@@ -35,6 +35,18 @@ MISSING_INFORMATION_OPTIONS: tuple[str, ...] = (
     "preferred date",
 )
 
+MESSAGE_SOURCE_OPTIONS: tuple[str, ...] = (
+    "whatsapp",
+    "outlook",
+    "vcita",
+    "other",
+)
+_MESSAGE_SOURCE_ALIASES = {
+    "email": "outlook",
+    "microsoft outlook": "outlook",
+    "ms outlook": "outlook",
+}
+
 StyleTag = Literal[
     "fine-line",
     "watercolor",
@@ -116,13 +128,45 @@ class TattooInquiryInput(BaseModel):
         ),
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def infer_nested_message_source(cls, value: Any) -> Any:
+        """Use the backend's nested lead/intake source when not explicit."""
+        if not isinstance(value, dict) or "message_source" in value:
+            return value
+
+        existing_db_state = value.get("existing_db_state")
+        if not isinstance(existing_db_state, dict):
+            return value
+
+        candidates: list[Any] = []
+        for key in ("intake", "lead"):
+            record = existing_db_state.get(key)
+            if isinstance(record, dict):
+                candidates.append(record.get("source"))
+        candidates.append(existing_db_state.get("source"))
+
+        for candidate in candidates:
+            normalized = cls._normalize_source_value(candidate)
+            if normalized in MESSAGE_SOURCE_OPTIONS:
+                data = dict(value)
+                data["message_source"] = normalized
+                return data
+        return value
+
     @field_validator("message_source", mode="before")
     @classmethod
     def normalize_message_source(cls, value: Any) -> Any:
         """Accept source names without making casing a backend concern."""
-        if isinstance(value, str):
-            return value.strip().casefold()
-        return value
+        return cls._normalize_source_value(value)
+
+    @staticmethod
+    def _normalize_source_value(value: Any) -> Any:
+        """Normalize known backend source values and email aliases."""
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip().casefold()
+        return _MESSAGE_SOURCE_ALIASES.get(normalized, normalized)
 
     @field_validator("new_image_urls")
     @classmethod
