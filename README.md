@@ -43,6 +43,7 @@ Send a `POST` request to `/api/v1/inquiries/analyze` with a payload like this:
 ```json
 {
   "current_message": "I want a 10cm black floral tattoo on my arm.",
+  "message_source": "whatsapp",
   "new_image_urls": [],
   "existing_db_state": {},
   "recent_chat_history": [
@@ -50,6 +51,10 @@ Send a `POST` request to `/api/v1/inquiries/analyze` with a payload like this:
   ]
 }
 ```
+
+Set `message_source` to `outlook` to receive a professional email draft that
+requests all missing intake details in one message. When omitted, it defaults
+to `whatsapp` and keeps the concise conversational reply format.
 
 Use `/api/v1/inquiries/telegram-summary` for high-risk inquiries. It returns a
 staff summary together with the generated draft reply.

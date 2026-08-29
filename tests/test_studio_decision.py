@@ -70,6 +70,7 @@ class StaticRouter:
         current_message: str = "",
         recent_chat_history: list[Message] | None = None,
         existing_db_state: dict[str, object] | None = None,
+        message_source: str = "whatsapp",
     ) -> AIExtractionOutput:
         """Return a deterministic legacy routing result."""
         return _analysis()

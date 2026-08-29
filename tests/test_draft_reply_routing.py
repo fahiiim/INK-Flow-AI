@@ -146,3 +146,40 @@ def test_non_string_draft_reply_uses_validated_fallback() -> None:
     assert "- Style:" not in result.draft_reply
     assert "Unknown" not in result.draft_reply
     assert result.draft_reply.count("?") <= 2
+
+
+def test_outlook_route_uses_email_composer_and_one_routing_llm_call() -> None:
+    """Outlook bypasses chat drafting and requests all missing facts."""
+    fake_llm = SequentialLLM([_reasoning_response()])
+    extracted = TattooExtractionDraft(
+        tattoo_idea="Floral tattoo",
+        style_tags=["unknown"],
+        placement="",
+        size_estimate_cm="",
+        color_preference="",
+        missing_information=[
+            "size in cm",
+            "placement",
+            "reference images",
+            "tattoo style",
+            "color preference",
+            "preferred date",
+        ],
+    )
+
+    result = TattooRouter(
+        llm=cast(ChatOpenAI, fake_llm),
+        vector_store=_warm_vector_store(),
+    ).route(
+        extracted=extracted,
+        current_message="I am interested in a floral tattoo.",
+        message_source="outlook",
+    )
+
+    assert result.draft_reply.startswith(
+        "Subject: Additional Information Required for Your Tattoo Inquiry"
+    )
+    assert result.draft_reply.count("\n- ") == 7
+    assert result.risk_level == "low"
+    assert result.auto_reply_allowed is True
+    assert len(fake_llm.calls) == 1

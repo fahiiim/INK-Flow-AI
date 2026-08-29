@@ -29,6 +29,7 @@ from .schemas import (
     AIExtractionOutput,
     ConfidenceLevel,
     Message,
+    MessageSource,
     RiskLevel,
     SuggestedArtist,
     TattooExtractionDraft,
@@ -117,8 +118,9 @@ class TattooRouter:
         current_message: str = "",
         recent_chat_history: list[Message] | None = None,
         existing_db_state: dict[str, Any] | None = None,
+        message_source: MessageSource = "whatsapp",
     ) -> AIExtractionOutput:
-        """Create final output with a concise conversational reply."""
+        """Create final output with reply formatting for its source."""
         history = recent_chat_history or []
         db_state = existing_db_state or {}
         artist_decision = self._suggest_artist(extracted)
@@ -146,6 +148,7 @@ class TattooRouter:
             suggested_artist=artist_decision.suggested_artist,
             risk_level=risk_level,
             existing_db_state=db_state,
+            message_source=message_source,
         )
 
         return AIExtractionOutput(
@@ -172,8 +175,14 @@ class TattooRouter:
         suggested_artist: SuggestedArtist,
         risk_level: RiskLevel,
         existing_db_state: dict[str, Any],
+        message_source: MessageSource,
     ) -> str:
         """Generate and strictly validate a client-facing draft reply."""
+        if message_source == "outlook":
+            return self._reply_composer.compose_outlook_email(
+                extracted=extracted,
+            )
+
         try:
             format_instructions = self._draft_parser.get_format_instructions()
             human_prompt = build_draft_reply_human_prompt(

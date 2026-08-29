@@ -58,6 +58,7 @@ SuggestedArtist = Annotated[
 ]
 ConfidenceLevel = Literal["high", "medium", "low"]
 RiskLevel = Literal["low", "high"]
+MessageSource = Literal["whatsapp", "outlook", "vcita", "other"]
 VisualColorPreference = Literal["black-and-grey", "color", "unknown"]
 
 MissingInformationItem = Literal[
@@ -107,6 +108,21 @@ class TattooInquiryInput(BaseModel):
         max_length=30,
         description="Up to 30 recent messages used for context resolution.",
     )
+    message_source: MessageSource = Field(
+        default="whatsapp",
+        description=(
+            "Source channel used to select WhatsApp chat or Outlook email "
+            "reply formatting."
+        ),
+    )
+
+    @field_validator("message_source", mode="before")
+    @classmethod
+    def normalize_message_source(cls, value: Any) -> Any:
+        """Accept source names without making casing a backend concern."""
+        if isinstance(value, str):
+            return value.strip().casefold()
+        return value
 
     @field_validator("new_image_urls")
     @classmethod

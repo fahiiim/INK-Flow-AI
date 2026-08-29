@@ -153,3 +153,59 @@ def test_incomplete_request_asks_for_reference_image_first() -> None:
     assert "rough size" not in reply
     assert "Where on the body" not in reply
     assert "preferred date" not in reply.casefold()
+
+
+def test_outlook_email_requests_every_missing_item_at_once() -> None:
+    """Outlook receives one professional email with the full missing list."""
+    extracted = TattooExtractionDraft(
+        tattoo_idea="Floral tattoo",
+        style_tags=["unknown"],
+        placement="",
+        size_estimate_cm="",
+        color_preference="",
+        missing_information=[
+            "size in cm",
+            "placement",
+            "reference images",
+            "tattoo style",
+            "color preference",
+            "preferred date",
+        ],
+    )
+
+    reply = ConversationReplyComposer().compose_outlook_email(extracted)
+
+    assert reply.startswith(
+        "Subject: Additional Information Required for Your Tattoo Inquiry"
+    )
+    assert "\n\nHello,\n\n" in reply
+    assert "please reply to this email with all of the following" in reply
+    assert "- Approximate tattoo size in centimeters" in reply
+    assert "- Intended body placement" in reply
+    assert "- Reference images" in reply
+    assert "- Preferred tattoo style" in reply
+    assert "- Color preference" in reply
+    assert "- Preferred appointment date" in reply
+    assert "Thank you for contacting Tattoo Hysteria." in reply
+    assert reply.endswith("Kind regards,\nTattoo Hysteria")
+
+
+def test_outlook_complete_inquiry_confirms_review_without_questions() -> None:
+    """A complete Outlook inquiry becomes a polished receipt email."""
+    extracted = TattooExtractionDraft(
+        tattoo_idea="Fine-line lotus",
+        style_tags=["fine-line"],
+        placement="inner wrist",
+        size_estimate_cm="5cm",
+        color_preference="black-and-grey",
+        missing_information=[],
+    )
+
+    reply = ConversationReplyComposer().compose_outlook_email(extracted)
+
+    assert reply.startswith("Subject: Tattoo Inquiry Received")
+    assert "- Tattoo concept: Fine-line lotus" in reply
+    assert "- Style: fine-line" in reply
+    assert "- Placement: inner wrist" in reply
+    assert "all of the following information" not in reply
+    assert "contact you with the next steps" in reply

@@ -38,6 +38,13 @@ def test_hybrid_input_accepts_only_canonical_fields() -> None:
 
     assert inquiry.current_message == "Actually make it 10cm."
     assert inquiry.new_image_urls == ["https://example.com/reference.jpg"]
+    assert inquiry.message_source == "whatsapp"
+
+    outlook_inquiry = TattooInquiryInput(
+        current_message="I would like to discuss a tattoo.",
+        message_source=" Outlook ",
+    )
+    assert outlook_inquiry.message_source == "outlook"
 
     with pytest.raises(ValidationError):
         TattooInquiryInput.model_validate(
@@ -45,6 +52,12 @@ def test_hybrid_input_accepts_only_canonical_fields() -> None:
                 "client_text": "Legacy message",
                 "image_urls": [],
             }
+        )
+
+    with pytest.raises(ValidationError):
+        TattooInquiryInput(
+            current_message="Valid message",
+            message_source="instagram",
         )
 
 

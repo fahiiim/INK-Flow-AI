@@ -24,6 +24,7 @@ class StubAIBrain:
         new_image_urls: list[str] | None = None,
         existing_db_state: dict[str, Any] | None = None,
         recent_chat_history: list[Message] | None = None,
+        message_source: str | None = None,
     ) -> AIExtractionOutput:
         """Record validated context and return the configured analysis."""
         self.calls.append(
@@ -32,6 +33,7 @@ class StubAIBrain:
                 "new_image_urls": new_image_urls or [],
                 "existing_db_state": existing_db_state or {},
                 "recent_chat_history": recent_chat_history or [],
+                "message_source": message_source,
             }
         )
         return self._result

@@ -31,6 +31,7 @@ class StubAIBrain:
         new_image_urls: list[str] | None = None,
         existing_db_state: dict[str, Any] | None = None,
         recent_chat_history: list[Message] | None = None,
+        message_source: str | None = None,
     ) -> AIExtractionOutput:
         """Record request data and return or raise the configured outcome."""
         self.calls.append(
@@ -39,6 +40,7 @@ class StubAIBrain:
                 "new_image_urls": new_image_urls or [],
                 "existing_db_state": existing_db_state or {},
                 "recent_chat_history": recent_chat_history or [],
+                "message_source": message_source,
             }
         )
         if self._error:
@@ -124,6 +126,7 @@ def test_analyze_endpoint_returns_strict_output() -> None:
             "/api/v1/inquiries/analyze",
             json={
                 "current_message": "Actually make the lotus 10cm.",
+                "message_source": "outlook",
                 "new_image_urls": ["https://example.com/new-lotus.jpg"],
                 "existing_db_state": {
                     "size": "5cm",
@@ -162,6 +165,7 @@ def test_analyze_endpoint_returns_strict_output() -> None:
                     content="We recorded a 5cm size.",
                 ),
             ],
+            "message_source": "outlook",
         }
     ]
 
@@ -192,6 +196,7 @@ def test_analyze_endpoint_keeps_latest_thirty_history_messages() -> None:
         )
 
     assert response.status_code == 200
+    assert brain.calls[0]["message_source"] == "whatsapp"
     forwarded_history = brain.calls[0]["recent_chat_history"]
     assert isinstance(forwarded_history, list)
     assert len(forwarded_history) == 30

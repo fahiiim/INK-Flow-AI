@@ -19,10 +19,24 @@ from .decision_schemas import (
 from .errors import AnalysisPipelineError
 from .extraction import TattooTextExtractor
 from .routing import TattooRouter
-from .schemas import AIExtractionOutput, Message, TattooInquiryInput
+from .schemas import (
+    AIExtractionOutput,
+    Message,
+    MessageSource,
+    TattooInquiryInput,
+)
 from .vision import TattooVisionAnalyzer
 
 _AUTOMATION_PAUSED_DRAFT = "A staff member will reply to you shortly."
+_AUTOMATION_PAUSED_EMAIL_DRAFT = (
+    "Subject: Tattoo Inquiry Received\n\n"
+    "Hello,\n\n"
+    "Thank you for contacting Tattoo Hysteria. We have received your "
+    "message. A member of our studio team will review it and reply as soon as "
+    "possible.\n\n"
+    "Kind regards,\n"
+    "Tattoo Hysteria"
+)
 
 
 class StudioAIBrain:
@@ -46,6 +60,7 @@ class StudioAIBrain:
         new_image_urls: list[str] | None = None,
         existing_db_state: dict[str, Any] | None = None,
         recent_chat_history: list[Message] | None = None,
+        message_source: MessageSource | str | None = None,
         *,
         text: str | None = None,
         image_urls: list[str] | None = None,
@@ -60,6 +75,7 @@ class StudioAIBrain:
             new_image_urls=new_image_urls,
             existing_db_state=existing_db_state,
             recent_chat_history=recent_chat_history,
+            message_source=message_source,
             text=text,
             image_urls=image_urls,
         )
@@ -82,6 +98,7 @@ class StudioAIBrain:
             current_message=inquiry.current_message,
             recent_chat_history=inquiry.recent_chat_history,
             existing_db_state=inquiry.existing_db_state,
+            message_source=inquiry.message_source,
         )
 
     def process_studio_decision(
@@ -95,6 +112,7 @@ class StudioAIBrain:
             new_image_urls=inquiry.new_image_urls,
             existing_db_state=inquiry.existing_db_state,
             recent_chat_history=inquiry.recent_chat_history,
+            message_source=context.channel,
         )
         if self._is_automation_paused(inquiry):
             return self._build_automation_paused_decision(analysis)
@@ -126,7 +144,11 @@ class StudioAIBrain:
             ),
             missing_information=[],
             risk_level="high",
-            draft_reply=_AUTOMATION_PAUSED_DRAFT,
+            draft_reply=(
+                _AUTOMATION_PAUSED_EMAIL_DRAFT
+                if inquiry.message_source == "outlook"
+                else _AUTOMATION_PAUSED_DRAFT
+            ),
             auto_reply_allowed=False,
             telegram_review_required=True,
         )
@@ -188,6 +210,7 @@ class StudioAIBrain:
         new_image_urls: list[str] | None,
         existing_db_state: dict[str, Any] | None,
         recent_chat_history: list[Message] | None,
+        message_source: MessageSource | str | None,
         text: str | None,
         image_urls: list[str] | None,
     ) -> TattooInquiryInput:
@@ -205,6 +228,7 @@ class StudioAIBrain:
             "new_image_urls": resolved_images,
             "existing_db_state": existing_db_state or {},
             "recent_chat_history": recent_chat_history or [],
+            "message_source": message_source or "whatsapp",
         }
         try:
             return TattooInquiryInput.model_validate(payload)

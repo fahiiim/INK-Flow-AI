@@ -46,6 +46,7 @@ def _process_inquiry(
             new_image_urls=payload.new_image_urls,
             existing_db_state=payload.existing_db_state,
             recent_chat_history=payload.recent_chat_history,
+            message_source=payload.message_source,
         )
     except AnalysisPipelineError as exc:
         raise HTTPException(

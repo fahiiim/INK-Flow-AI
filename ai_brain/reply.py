@@ -55,6 +55,16 @@ _MISSING_QUESTIONS = {
     "color preference": "Would you like black-and-grey or colour?",
     "preferred date": "What date or time works best for you?",
 }
+_MISSING_EMAIL_REQUESTS = {
+    "size in cm": "Approximate tattoo size in centimeters",
+    "placement": "Intended body placement",
+    "reference images": (
+        "Reference images showing the design or style you have in mind"
+    ),
+    "tattoo style": "Preferred tattoo style",
+    "color preference": "Color preference (black-and-grey or color)",
+    "preferred date": "Preferred appointment date or suitable time frame",
+}
 _QUESTION_MARKERS = {
     "size in cm": ("size", " cm"),
     "placement": ("where", "body", "placement"),
@@ -160,6 +170,95 @@ class ConversationReplyComposer:
             " ".join(reply_parts),
             history,
         )
+
+    def compose_outlook_email(
+        self,
+        extracted: TattooExtractionDraft,
+    ) -> str:
+        """Create one professional email containing every missing request."""
+        missing_information = list(extracted.missing_information)
+        subject = (
+            "Additional Information Required for Your Tattoo Inquiry"
+            if missing_information
+            else "Tattoo Inquiry Received"
+        )
+        sections = [
+            f"Subject: {subject}",
+            "Hello,",
+            (
+                "Thank you for contacting Tattoo Hysteria. We have received "
+                "your tattoo inquiry."
+            ),
+        ]
+
+        known_details = self._outlook_known_details(extracted)
+        if known_details:
+            sections.append(
+                "We have recorded the following details:\n"
+                + "\n".join(
+                    f"- {label}: {value}" for label, value in known_details
+                )
+            )
+
+        if missing_information:
+            requested_details = "\n".join(
+                f"- {_MISSING_EMAIL_REQUESTS[item]}"
+                for item in missing_information
+            )
+            sections.extend(
+                [
+                    (
+                        "To help us review your request, please reply to this "
+                        "email with all of the following information:\n"
+                        f"{requested_details}"
+                    ),
+                    (
+                        "Once we receive these details, our studio team will "
+                        "review your inquiry and contact you with the next "
+                        "steps."
+                    ),
+                ]
+            )
+        else:
+            sections.append(
+                "Our studio team will review your inquiry and contact you "
+                "with the next steps."
+            )
+
+        sections.append("Kind regards,\nTattoo Hysteria")
+        return "\n\n".join(sections)
+
+    def _outlook_known_details(
+        self,
+        extracted: TattooExtractionDraft,
+    ) -> list[tuple[str, str]]:
+        """Return known intake facts as concise professional email rows."""
+        details: list[tuple[str, str]] = []
+        if self._is_known_reply_value(extracted.tattoo_idea):
+            details.append(
+                ("Tattoo concept", self._email_value(extracted.tattoo_idea))
+            )
+
+        style_tags = [
+            tag for tag in extracted.style_tags if tag != "unknown"
+        ]
+        if style_tags:
+            details.append(("Style", ", ".join(style_tags)))
+        for label, value in (
+            ("Placement", extracted.placement),
+            ("Approximate size", extracted.size_estimate_cm),
+            ("Color preference", extracted.color_preference),
+        ):
+            if self._is_known_reply_value(value):
+                details.append((label, self._email_value(value)))
+        return details
+
+    def _email_value(self, value: str, limit: int = 240) -> str:
+        """Keep a potentially long extracted value within reply limits."""
+        normalized = " ".join(value.split())
+        if len(normalized) <= limit:
+            return normalized
+        return normalized[: limit - 3].rstrip() + "..."
 
     def _is_greeting_only(self, message: str) -> bool:
         """Return whether the latest message contains only a greeting."""

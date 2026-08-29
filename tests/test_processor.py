@@ -67,7 +67,7 @@ class StubRouter:
         self._output = output
         self.calls: list[TattooExtractionDraft] = []
         self.context_calls: list[
-            tuple[str, list[Message], dict[str, object]]
+            tuple[str, list[Message], dict[str, object], str]
         ] = []
 
     def route(
@@ -76,6 +76,7 @@ class StubRouter:
         current_message: str = "",
         recent_chat_history: list[Message] | None = None,
         existing_db_state: dict[str, object] | None = None,
+        message_source: str = "whatsapp",
     ) -> AIExtractionOutput:
         """Return pre-defined output and track invocation input."""
         self.calls.append(extracted)
@@ -84,6 +85,7 @@ class StubRouter:
                 current_message,
                 list(recent_chat_history or []),
                 dict(existing_db_state or {}),
+                message_source,
             )
         )
         return self._output
@@ -129,12 +131,23 @@ def test_automation_pause_returns_before_ai_calls() -> None:
         existing_db_state={"automation_paused": True},
         recent_chat_history=[],
     )
+    outlook_result = brain.process_inquiry(
+        current_message="I want to change my booking.",
+        existing_db_state={"automation_paused": True},
+        message_source="outlook",
+    )
 
     assert result.suggested_artist == "Unclear"
     assert result.risk_level == "high"
     assert result.draft_reply == "A staff member will reply to you shortly."
     assert result.auto_reply_allowed is False
     assert result.telegram_review_required is True
+    assert outlook_result.draft_reply.startswith(
+        "Subject: Tattoo Inquiry Received\n\nHello,"
+    )
+    assert outlook_result.draft_reply.endswith(
+        "Kind regards,\nTattoo Hysteria"
+    )
     assert vision.calls == []
     assert extraction.calls == []
     assert router.calls == []
@@ -187,6 +200,7 @@ def test_process_inquiry_low_risk_fine_line_request() -> None:
         new_image_urls=["https://example.com/new-reference.jpg"],
         existing_db_state={"size": "5cm", "placement": "inner wrist"},
         recent_chat_history=history,
+        message_source="outlook",
     )
 
     assert result.suggested_artist == "Nina"
@@ -209,6 +223,7 @@ def test_process_inquiry_low_risk_fine_line_request() -> None:
             "Actually make the fine-line lotus 10cm.",
             history,
             {"size": "5cm", "placement": "inner wrist"},
+            "outlook",
         )
     ]
     assert result.draft_reply == (
