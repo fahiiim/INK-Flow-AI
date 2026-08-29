@@ -126,11 +126,15 @@ def test_analyze_endpoint_returns_strict_output() -> None:
             "/api/v1/inquiries/analyze",
             json={
                 "current_message": "Actually make the lotus 10cm.",
-                "message_source": "outlook",
                 "new_image_urls": ["https://example.com/new-lotus.jpg"],
                 "existing_db_state": {
                     "size": "5cm",
                     "placement": "inner wrist",
+                    "lead": {
+                        "name": "Maruf Hossain",
+                        "source": "outlook",
+                    },
+                    "intake": {"source": "outlook"},
                 },
                 "recent_chat_history": [
                     {
@@ -154,6 +158,11 @@ def test_analyze_endpoint_returns_strict_output() -> None:
             "existing_db_state": {
                 "size": "5cm",
                 "placement": "inner wrist",
+                "lead": {
+                    "name": "Maruf Hossain",
+                    "source": "outlook",
+                },
+                "intake": {"source": "outlook"},
             },
             "recent_chat_history": [
                 Message(
