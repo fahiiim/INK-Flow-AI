@@ -136,6 +136,8 @@ class StudioAIBrain:
             placement="",
             size_estimate_cm="",
             color_preference="",
+            date="",
+            time="",
             suggested_artist="Unclear",
             confidence_level="low",
             ai_reasoning=(

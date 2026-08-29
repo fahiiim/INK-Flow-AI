@@ -18,6 +18,8 @@ def _valid_output_payload() -> dict[str, Any]:
         "placement": "inner wrist",
         "size_estimate_cm": "5cm",
         "color_preference": "black-and-grey",
+        "date": "2026-09-04",
+        "time": "14:30",
         "suggested_artist": "Nina",
         "confidence_level": "high",
         "ai_reasoning": "Fine-line work matches Nina.",
@@ -111,6 +113,8 @@ def test_input_rejects_request_without_text_or_image() -> None:
         ("risk_level", "medium"),
         ("style_tags", ["neo-traditional"]),
         ("style_tags", []),
+        ("date", "2026-02-30"),
+        ("time", "2:30 PM"),
     ],
 )
 def test_output_rejects_values_outside_contract(
@@ -132,6 +136,18 @@ def test_output_rejects_extra_fields() -> None:
 
     with pytest.raises(ValidationError):
         AIExtractionOutput.model_validate(payload)
+
+
+def test_output_includes_empty_scheduling_fields_when_unknown() -> None:
+    """The response always exposes both scheduling keys."""
+    payload = _valid_output_payload()
+    payload.pop("date")
+    payload.pop("time")
+
+    result = AIExtractionOutput.model_validate(payload)
+
+    assert result.date == ""
+    assert result.time == ""
 
 
 def test_high_risk_output_rejects_auto_reply_delivery() -> None:

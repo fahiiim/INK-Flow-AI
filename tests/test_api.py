@@ -58,6 +58,8 @@ def _successful_output() -> AIExtractionOutput:
         placement="inner wrist",
         size_estimate_cm="4",
         color_preference="black-and-grey",
+        date="2026-09-04",
+        time="14:30",
         suggested_artist="Nina",
         confidence_level="high",
         ai_reasoning="Fine-line work routes to Nina.",
@@ -151,6 +153,8 @@ def test_analyze_endpoint_returns_strict_output() -> None:
 
     assert response.status_code == 200
     assert response.json() == output.model_dump(mode="json")
+    assert response.json()["date"] == "2026-09-04"
+    assert response.json()["time"] == "14:30"
     assert brain.calls == [
         {
             "current_message": "Actually make the lotus 10cm.",

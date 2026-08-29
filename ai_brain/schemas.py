@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date as calendar_date
+from datetime import datetime
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
@@ -27,12 +29,14 @@ STYLE_TAG_OPTIONS: tuple[str, ...] = (
 )
 
 MISSING_INFORMATION_OPTIONS: tuple[str, ...] = (
+    "tattoo idea",
     "size in cm",
     "placement",
     "reference images",
     "tattoo style",
     "color preference",
     "preferred date",
+    "preferred time",
 )
 
 MESSAGE_SOURCE_OPTIONS: tuple[str, ...] = (
@@ -74,12 +78,14 @@ MessageSource = Literal["whatsapp", "outlook", "vcita", "other"]
 VisualColorPreference = Literal["black-and-grey", "color", "unknown"]
 
 MissingInformationItem = Literal[
+    "tattoo idea",
     "size in cm",
     "placement",
     "reference images",
     "tattoo style",
     "color preference",
     "preferred date",
+    "preferred time",
 ]
 
 
@@ -234,14 +240,34 @@ class TattooExtractionDraft(BaseModel):
     color_preference: str = Field(
         description="Client color preference for the tattoo.",
     )
+    date: str = Field(
+        default="",
+        description="Preferred appointment date in YYYY-MM-DD format.",
+    )
+    time: str = Field(
+        default="",
+        description="Preferred appointment time in 24-hour HH:MM format.",
+    )
     missing_information: list[MissingInformationItem] = Field(
         default_factory=list,
         description=(
             "Missing intake items from the required checklist: "
-            "size in cm, placement, reference images, "
-            "color preference, preferred date."
+            "tattoo idea, size in cm, placement, reference images, "
+            "tattoo style, color preference, preferred date, preferred time."
         ),
     )
+
+    @field_validator("date")
+    @classmethod
+    def validate_date_format(cls, value: str) -> str:
+        """Require a real calendar date in the public YYYY-MM-DD format."""
+        return _validate_preferred_date(value)
+
+    @field_validator("time")
+    @classmethod
+    def validate_time_format(cls, value: str) -> str:
+        """Require a real clock time in the public 24-hour HH:MM format."""
+        return _validate_preferred_time(value)
 
 
 class AIExtractionOutput(BaseModel):
@@ -264,6 +290,14 @@ class AIExtractionOutput(BaseModel):
     )
     color_preference: str = Field(
         description="Color preference such as black-and-grey or full color.",
+    )
+    date: str = Field(
+        default="",
+        description="Preferred appointment date in YYYY-MM-DD format.",
+    )
+    time: str = Field(
+        default="",
+        description="Preferred appointment time in 24-hour HH:MM format.",
     )
     suggested_artist: SuggestedArtist = Field(
         description="Configured artist display name or Unclear.",
@@ -291,6 +325,18 @@ class AIExtractionOutput(BaseModel):
         description="Whether the draft must be routed to staff in Telegram.",
     )
 
+    @field_validator("date")
+    @classmethod
+    def validate_date_format(cls, value: str) -> str:
+        """Require a real calendar date in the public YYYY-MM-DD format."""
+        return _validate_preferred_date(value)
+
+    @field_validator("time")
+    @classmethod
+    def validate_time_format(cls, value: str) -> str:
+        """Require a real clock time in the public 24-hour HH:MM format."""
+        return _validate_preferred_time(value)
+
     @model_validator(mode="before")
     @classmethod
     def default_delivery_controls(cls, value: Any) -> Any:
@@ -311,3 +357,29 @@ class AIExtractionOutput(BaseModel):
         if self.risk_level == "high" and not self.telegram_review_required:
             raise ValueError("High-risk drafts require Telegram review.")
         return self
+
+
+def _validate_preferred_date(value: str) -> str:
+    """Validate and preserve an optional ISO calendar date string."""
+    if not value:
+        return value
+    try:
+        parsed = calendar_date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("date must use YYYY-MM-DD format.") from exc
+    if parsed.isoformat() != value:
+        raise ValueError("date must use YYYY-MM-DD format.")
+    return value
+
+
+def _validate_preferred_time(value: str) -> str:
+    """Validate and preserve an optional 24-hour clock time string."""
+    if not value:
+        return value
+    try:
+        parsed = datetime.strptime(value, "%H:%M")
+    except ValueError as exc:
+        raise ValueError("time must use 24-hour HH:MM format.") from exc
+    if parsed.strftime("%H:%M") != value:
+        raise ValueError("time must use 24-hour HH:MM format.")
+    return value

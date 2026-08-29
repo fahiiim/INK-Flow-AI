@@ -164,6 +164,7 @@ def test_outlook_route_uses_email_composer_and_one_routing_llm_call() -> None:
             "tattoo style",
             "color preference",
             "preferred date",
+            "preferred time",
         ],
     )
 
@@ -179,7 +180,7 @@ def test_outlook_route_uses_email_composer_and_one_routing_llm_call() -> None:
 
     assert result.draft_reply.startswith("Dear Maruf,\n\n")
     assert "Subject:" not in result.draft_reply
-    assert result.draft_reply.count("\n- ") == 7
+    assert result.draft_reply.count("\n- ") == 8
     assert "Dear Maruf," in result.draft_reply
     assert result.risk_level == "low"
     assert result.auto_reply_allowed is True

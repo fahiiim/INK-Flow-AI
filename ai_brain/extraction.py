@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
+from datetime import date as calendar_date
+from datetime import timedelta
 from typing import Any, cast
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -30,6 +32,21 @@ LOGGER = logging.getLogger(__name__)
 _IMAGE_ONLY_MESSAGE = "Client sent reference image(s) without a text caption."
 _STYLE_TAG_SET = set(STYLE_TAG_OPTIONS)
 _MISSING_SET = set(MISSING_INFORMATION_OPTIONS)
+_GENERIC_TATTOO_IDEA_PATTERN = re.compile(
+    r"^(?:(?:i|we|the client)\s+)?"
+    r"(?:(?:want|wants|need|needs|would like|request|requests|"
+    r"is interested in)\s+)?"
+    r"(?:a\s+|an\s+|some\s+)?(?:new\s+)?tattoo"
+    r"(?:\s+(?:idea|design|request|inquiry))?$",
+    flags=re.IGNORECASE,
+)
+_GENERAL_HELP_PATTERN = re.compile(
+    r"^(?:hi|hello|hey|good morning|good afternoon|good evening|"
+    r"(?:can|could|would)\s+you\s+help(?:\s+me)?(?:\s+out)?|"
+    r"(?:i\s+)?need\s+help|please\s+help)(?:\s+with\s+(?:a\s+)?"
+    r"tattoo)?$",
+    flags=re.IGNORECASE,
+)
 _STYLE_TEXT_ALIASES: dict[StyleTag, tuple[str, ...]] = {
     "fine-line": ("fine-line", "fine line", "fineline"),
     "watercolor": ("watercolor", "watercolour"),
@@ -96,24 +113,65 @@ _COLOR_FIELD_TERMS = (
     "black & grey",
     "black & gray",
 )
+_DATE_FIELD_TERMS = (
+    "date",
+    "day",
+    "today",
+    "todaye",
+    "tomorrow",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+)
+_TIME_FIELD_TERMS = (
+    "time",
+    "morning",
+    "afternoon",
+    "evening",
+    " am",
+    " pm",
+)
+_MONTH_NUMBERS = {
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "april": 4,
+    "may": 5,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "september": 9,
+    "october": 10,
+    "november": 11,
+    "december": 12,
+}
+_WEEKDAY_NUMBERS = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+}
 _NEGATION_PREFIX_PATTERN = re.compile(
     r"(?:\bnot|\bno|instead\s+of|rather\s+than|\bfrom)\s+$",
-    flags=re.IGNORECASE,
-)
-_DATE_MENTION_PATTERN = re.compile(
-    r"\b(?:"
-    r"\d{4}-\d{1,2}-\d{1,2}|"
-    r"\d{1,2}[/\-]\d{1,2}(?:[/\-]\d{2,4})?|"
-    r"todaye?|tomorrow|tonight|this morning|this afternoon|this evening|"
-    r"next week|next month|"
-    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
-    r"january|february|march|april|may|june|july|august|september|"
-    r"october|november|december"
-    r")\b",
-    flags=re.IGNORECASE,
-)
-_TIME_MENTION_PATTERN = re.compile(
-    r"\b(?:at\s+)?\d{1,2}(?::[0-5]\d)?\s*(?:am|pm)\b",
     flags=re.IGNORECASE,
 )
 
@@ -134,6 +192,14 @@ class _ExtractionSubset(BaseModel):
     )
     color_preference: str = Field(
         description="Color preference or constraints.",
+    )
+    date: str = Field(
+        default="",
+        description="Preferred appointment date in YYYY-MM-DD format.",
+    )
+    time: str = Field(
+        default="",
+        description="Preferred appointment time in 24-hour HH:MM format.",
     )
     missing_information: list[MissingInformationItem] = Field(
         default_factory=list,
@@ -223,6 +289,8 @@ class TattooTextExtractor:
                 placement=resolved_output.placement,
                 size_estimate_cm=resolved_output.size_estimate_cm,
                 color_preference=resolved_output.color_preference,
+                date=resolved_output.date,
+                time=resolved_output.time,
                 missing_information=missing_information,
             )
         except Exception as exc:  # pragma: no cover - defensive branch
@@ -343,6 +411,8 @@ class TattooTextExtractor:
             placement=llm_output.placement,
             size_estimate_cm=llm_output.size_estimate_cm,
             color_preference=color_preference,
+            date=llm_output.date,
+            time=llm_output.time,
             missing_information=llm_output.missing_information,
         )
 
@@ -365,6 +435,9 @@ class TattooTextExtractor:
             recent_chat_history=recent_chat_history,
         )
         checks: dict[MissingInformationItem, bool] = {
+            "tattoo idea": self._is_missing_tattoo_idea(
+                llm_output.tattoo_idea
+            ),
             "size in cm": self._is_blank(llm_output.size_estimate_cm),
             "placement": self._is_blank(llm_output.placement),
             "tattoo style": not any(tag != "unknown" for tag in style_tags),
@@ -376,14 +449,10 @@ class TattooTextExtractor:
                     ("reference_images", "image_urls", "images", "references"),
                 )
                 or self._mentions_reference_image(conversation_text)
+                or self._declines_reference_image(conversation_text)
             ),
-            "preferred date": not (
-                self._has_state_value(
-                    existing_db_state,
-                    ("preferred_date", "appointment_date", "requested_date"),
-                )
-                or self._mentions_preferred_date(conversation_text)
-            ),
+            "preferred date": self._is_blank(llm_output.date),
+            "preferred time": self._is_blank(llm_output.time),
         }
         for item, is_missing in checks.items():
             if is_missing:
@@ -415,6 +484,8 @@ class TattooTextExtractor:
             placement="",
             size_estimate_cm=self._extract_size_from_text(current_message),
             color_preference="",
+            date=self._extract_date_from_text(current_message),
+            time=self._extract_time_from_text(current_message),
             missing_information=[],
         )
         visual_fallback = self._apply_visual_color_default(
@@ -441,6 +512,8 @@ class TattooTextExtractor:
             placement=resolved_fallback.placement,
             size_estimate_cm=resolved_fallback.size_estimate_cm,
             color_preference=resolved_fallback.color_preference,
+            date=resolved_fallback.date,
+            time=resolved_fallback.time,
             missing_information=missing,
         )
 
@@ -488,6 +561,40 @@ class TattooTextExtractor:
                 ),
                 value_extractor=self._extract_color_from_text,
                 field_terms=_COLOR_FIELD_TERMS,
+            ),
+            date=self._normalize_date_value(
+                self._resolve_context_field(
+                    llm_value=self._normalize_date_value(llm_output.date),
+                    current_message=current_message,
+                    recent_chat_history=recent_chat_history,
+                    existing_db_state=existing_db_state,
+                    state_keys=(
+                        "date",
+                        "preferred_date",
+                        "appointment_date",
+                        "requested_date",
+                        "scheduled_date",
+                    ),
+                    value_extractor=self._extract_date_from_text,
+                    field_terms=_DATE_FIELD_TERMS,
+                )
+            ),
+            time=self._normalize_time_value(
+                self._resolve_context_field(
+                    llm_value=self._normalize_time_value(llm_output.time),
+                    current_message=current_message,
+                    recent_chat_history=recent_chat_history,
+                    existing_db_state=existing_db_state,
+                    state_keys=(
+                        "time",
+                        "preferred_time",
+                        "appointment_time",
+                        "requested_time",
+                        "scheduled_time",
+                    ),
+                    value_extractor=self._extract_time_from_text,
+                    field_terms=_TIME_FIELD_TERMS,
+                )
             ),
             missing_information=llm_output.missing_information,
         )
@@ -550,12 +657,13 @@ class TattooTextExtractor:
         state_keys: tuple[str, ...],
     ) -> str:
         """Return the first non-empty scalar value for known state keys."""
-        for key in state_keys:
-            value = existing_db_state.get(key)
-            if isinstance(value, str) and not self._is_blank(value):
-                return value.strip()
-            if isinstance(value, (int, float)):
-                return str(value)
+        for record in self._state_records(existing_db_state):
+            for key in state_keys:
+                value = record.get(key)
+                if isinstance(value, str) and not self._is_blank(value):
+                    return value.strip()
+                if isinstance(value, (int, float)):
+                    return str(value)
         return ""
 
     def _has_state_value(
@@ -564,15 +672,31 @@ class TattooTextExtractor:
         state_keys: tuple[str, ...],
     ) -> bool:
         """Return whether database state contains a meaningful value."""
-        for key in state_keys:
-            value = existing_db_state.get(key)
-            if isinstance(value, str) and not self._is_blank(value):
-                return True
-            if isinstance(value, (list, tuple, set, dict)) and value:
-                return True
-            if value is not None and not isinstance(value, (str, list, tuple, set, dict)):
-                return True
+        for record in self._state_records(existing_db_state):
+            for key in state_keys:
+                value = record.get(key)
+                if isinstance(value, str) and not self._is_blank(value):
+                    return True
+                if isinstance(value, (list, tuple, set, dict)) and value:
+                    return True
+                if value is not None and not isinstance(
+                    value,
+                    (str, list, tuple, set, dict),
+                ):
+                    return True
         return False
+
+    def _state_records(
+        self,
+        existing_db_state: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Return root and supported nested backend intake records."""
+        records = [existing_db_state]
+        for key in ("intake", "latest_ai_analysis"):
+            value = existing_db_state.get(key)
+            if isinstance(value, dict):
+                records.append(value)
+        return records
 
     def _user_conversation_text(
         self,
@@ -608,6 +732,42 @@ class TattooTextExtractor:
             r"\b(image|photo|picture|reference)\b"
         )
         return bool(re.search(pattern, normalized))
+
+    def _declines_reference_image(self, text: str) -> bool:
+        """Detect that the client cannot or does not have a reference."""
+        normalized = " ".join(text.casefold().split())
+        patterns = (
+            r"\b(?:i\s+)?(?:do not|don't|dont|does not|doesn't|doesnt)\s+"
+            r"have\b.{0,25}\b(?:reference|image|photo|picture)s?\b",
+            r"\b(?:i\s+)?(?:have|got)\s+no\b.{0,25}"
+            r"\b(?:reference|image|photo|picture)s?\b",
+            r"\b(?:no|without)\s+(?:a\s+|any\s+)?(?:reference|"
+            r"reference image|image|photo|picture)s?\b",
+            r"\b(?:cannot|can't|cant|unable to)\s+"
+            r"(?:send|share|provide|upload)\b.{0,25}"
+            r"\b(?:reference|image|photo|picture)s?\b",
+        )
+        return any(re.search(pattern, normalized) for pattern in patterns)
+
+    def _is_missing_tattoo_idea(self, value: str) -> bool:
+        """Reject blank and generic values that contain no tattoo concept."""
+        if self._is_blank(value):
+            return True
+        normalized = " ".join(
+            re.sub(r"[^\w\s'-]", " ", value.casefold()).split()
+        )
+        if normalized in {
+            "unknown",
+            "not provided",
+            "general inquiry",
+            "general tattoo inquiry",
+            "tattoo help",
+        }:
+            return True
+        return bool(
+            _GENERIC_TATTOO_IDEA_PATTERN.fullmatch(normalized)
+            or _GENERAL_HELP_PATTERN.fullmatch(normalized)
+        )
 
     def _extract_size_from_text(self, text: str) -> str:
         """Extract an explicit centimeter size for safe fallback overrides."""
@@ -656,6 +816,131 @@ class TattooTextExtractor:
             return ""
         return max(matches, key=lambda item: item[0])[1]
 
+    def _extract_date_from_text(self, text: str) -> str:
+        """Extract and normalize the latest explicit preferred date."""
+        today = calendar_date.today()
+        candidates: list[tuple[int, calendar_date]] = []
+
+        for match in re.finditer(r"\b\d{4}-\d{1,2}-\d{1,2}\b", text):
+            parsed = self._safe_calendar_date(match.group(0))
+            if parsed is not None:
+                candidates.append((match.start(), parsed))
+
+        numeric_pattern = r"\b(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})\b"
+        for match in re.finditer(numeric_pattern, text):
+            day, month, year = (int(value) for value in match.groups())
+            if year < 100:
+                year += 2000
+            parsed = self._safe_calendar_date(
+                f"{year:04d}-{month:02d}-{day:02d}"
+            )
+            if parsed is not None:
+                candidates.append((match.start(), parsed))
+
+        month_names = "|".join(_MONTH_NUMBERS)
+        month_first = re.compile(
+            rf"\b({month_names})\s+(\d{{1,2}})(?:st|nd|rd|th)?"
+            rf"(?:,?\s+(\d{{4}}))?\b",
+            flags=re.IGNORECASE,
+        )
+        day_first = re.compile(
+            rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+({month_names})"
+            rf"(?:\s+(\d{{4}}))?\b",
+            flags=re.IGNORECASE,
+        )
+        for pattern, month_index, day_index, year_index in (
+            (month_first, 1, 2, 3),
+            (day_first, 2, 1, 3),
+        ):
+            for match in pattern.finditer(text):
+                month = _MONTH_NUMBERS[match.group(month_index).casefold()]
+                day = int(match.group(day_index))
+                year_text = match.group(year_index)
+                year = int(year_text) if year_text else today.year
+                parsed = self._safe_calendar_date(
+                    f"{year:04d}-{month:02d}-{day:02d}"
+                )
+                if parsed is None:
+                    continue
+                if year_text is None and parsed < today:
+                    parsed = self._safe_calendar_date(
+                        f"{year + 1:04d}-{month:02d}-{day:02d}"
+                    )
+                if parsed is not None:
+                    candidates.append((match.start(), parsed))
+
+        for match in re.finditer(
+            r"\b(todaye?|tomorrow)\b",
+            text,
+            flags=re.IGNORECASE,
+        ):
+            offset = 1 if match.group(1).casefold() == "tomorrow" else 0
+            candidates.append((match.start(), today + timedelta(days=offset)))
+
+        weekday_names = "|".join(_WEEKDAY_NUMBERS)
+        weekday_pattern = re.compile(
+            rf"\b(next\s+)?({weekday_names})\b",
+            flags=re.IGNORECASE,
+        )
+        for match in weekday_pattern.finditer(text):
+            weekday = _WEEKDAY_NUMBERS[match.group(2).casefold()]
+            offset = (weekday - today.weekday()) % 7
+            if offset == 0 or match.group(1):
+                offset += 7
+            candidates.append((match.start(), today + timedelta(days=offset)))
+
+        if not candidates:
+            return ""
+        return max(candidates, key=lambda item: item[0])[1].isoformat()
+
+    def _extract_time_from_text(self, text: str) -> str:
+        """Extract and normalize the latest explicit preferred time."""
+        candidates: list[tuple[int, str]] = []
+        twelve_hour_pattern = re.compile(
+            r"\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(am|pm)\b",
+            flags=re.IGNORECASE,
+        )
+        for match in twelve_hour_pattern.finditer(text):
+            hour = int(match.group(1)) % 12
+            if match.group(3).casefold() == "pm":
+                hour += 12
+            minute = int(match.group(2) or 0)
+            candidates.append((match.start(), f"{hour:02d}:{minute:02d}"))
+
+        twenty_four_hour_pattern = re.compile(
+            r"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)"
+        )
+        for match in twenty_four_hour_pattern.finditer(text):
+            candidates.append(
+                (
+                    match.start(),
+                    f"{int(match.group(1)):02d}:{int(match.group(2)):02d}",
+                )
+            )
+
+        if not candidates:
+            return ""
+        return max(candidates, key=lambda item: item[0])[1]
+
+    def _normalize_date_value(self, value: str) -> str:
+        """Normalize model or backend date text to the public contract."""
+        if self._is_blank(value):
+            return ""
+        return self._extract_date_from_text(value)
+
+    def _normalize_time_value(self, value: str) -> str:
+        """Normalize model or backend time text to the public contract."""
+        if self._is_blank(value):
+            return ""
+        return self._extract_time_from_text(value)
+
+    def _safe_calendar_date(self, value: str) -> calendar_date | None:
+        """Parse an ISO-like calendar date without allowing invalid dates."""
+        try:
+            return calendar_date.fromisoformat(value)
+        except ValueError:
+            return None
+
     def _mentions_field(
         self,
         text: str,
@@ -690,10 +975,3 @@ class TattooTextExtractor:
         """Return True when the extracted field is effectively empty."""
         normalized = value.strip().lower()
         return normalized in {"", "unknown", "n/a", "none", "not provided"}
-
-    def _mentions_preferred_date(self, text: str) -> bool:
-        """Heuristic date mention detector for intake completeness checks."""
-        return bool(
-            _DATE_MENTION_PATTERN.search(text)
-            or _TIME_MENTION_PATTERN.search(text)
-        )

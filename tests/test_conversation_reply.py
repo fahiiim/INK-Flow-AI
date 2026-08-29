@@ -29,11 +29,13 @@ def _incomplete_draft() -> TattooExtractionDraft:
         size_estimate_cm="",
         color_preference="",
         missing_information=[
+            "tattoo idea",
             "size in cm",
             "placement",
             "reference images",
             "color preference",
             "preferred date",
+            "preferred time",
         ],
     )
 
@@ -158,18 +160,20 @@ def test_incomplete_request_asks_for_reference_image_first() -> None:
 def test_outlook_email_requests_every_missing_item_at_once() -> None:
     """Outlook receives one professional email with the full missing list."""
     extracted = TattooExtractionDraft(
-        tattoo_idea="Floral tattoo",
+        tattoo_idea="",
         style_tags=["unknown"],
         placement="",
         size_estimate_cm="",
         color_preference="",
         missing_information=[
+            "tattoo idea",
             "size in cm",
             "placement",
             "reference images",
             "tattoo style",
             "color preference",
             "preferred date",
+            "preferred time",
         ],
     )
 
@@ -186,12 +190,14 @@ def test_outlook_email_requests_every_missing_item_at_once() -> None:
     assert reply.startswith("Dear Maruf,\n\n")
     assert "Subject:" not in reply
     assert "please reply to this email with all of the following" in reply
+    assert "- Tattoo idea, design concept, wording, or story" in reply
     assert "- Approximate tattoo size in centimeters" in reply
     assert "- Intended body placement" in reply
     assert "- Reference images" in reply
     assert "- Preferred tattoo style" in reply
     assert "- Color preference" in reply
     assert "- Preferred appointment date" in reply
+    assert "- Preferred appointment time" in reply
     assert "Thank you for contacting Tattoo Hysteria." in reply
     assert reply.endswith("Kind regards,\nTattoo Hysteria")
 
@@ -204,6 +210,8 @@ def test_outlook_complete_inquiry_confirms_review_without_questions() -> None:
         placement="inner wrist",
         size_estimate_cm="5cm",
         color_preference="black-and-grey",
+        date="2026-09-04",
+        time="14:30",
         missing_information=[],
     )
 
@@ -214,5 +222,7 @@ def test_outlook_complete_inquiry_confirms_review_without_questions() -> None:
     assert "- Tattoo concept: Fine-line lotus" in reply
     assert "- Style: fine-line" in reply
     assert "- Placement: inner wrist" in reply
+    assert "- Preferred date: 2026-09-04" in reply
+    assert "- Preferred time: 14:30" in reply
     assert "all of the following information" not in reply
     assert "contact you with the next steps" in reply

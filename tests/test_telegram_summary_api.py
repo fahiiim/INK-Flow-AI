@@ -48,6 +48,8 @@ def _analysis(risk_level: str) -> AIExtractionOutput:
             "placement": "back",
             "size_estimate_cm": "30cm",
             "color_preference": "black-and-grey",
+            "date": "2026-09-04",
+            "time": "14:30",
             "suggested_artist": "Hoss",
             "confidence_level": "high",
             "ai_reasoning": "Large traditional work and pricing need review.",
@@ -100,11 +102,18 @@ def test_high_risk_endpoint_returns_summary_then_draft_reply() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["risk_level"] == "high"
-    assert "HIGH-RISK TATTOO INQUIRY" in body["summary"]
-    assert "Client: Samim Osman" in body["summary"]
-    assert "Phone: 8801775155760" in body["summary"]
-    assert "Style: traditional" in body["summary"]
-    assert "Missing information: reference images" in body["summary"]
+    assert "\n" not in body["summary"]
+    assert body["summary"].startswith(
+        "Samim Osman (lead ID 3, phone 8801775155760) submitted a "
+        "high-risk tattoo inquiry"
+    )
+    assert "uses a traditional style" in body["summary"]
+    assert "measures approximately 30cm" in body["summary"]
+    assert "is intended for the back" in body["summary"]
+    assert "preferred appointment is 2026-09-04 at 14:30" in body["summary"]
+    assert "No new reference images were provided" in body["summary"]
+    assert "remaining information needed is reference images" in body["summary"]
+    assert "Hoss is the suggested artist with high confidence" in body["summary"]
     assert body["draft_reply"] == _analysis("high").draft_reply
     assert body["telegram_message"].startswith(body["summary"])
     assert "\n\nDRAFT REPLY\n" in body["telegram_message"]

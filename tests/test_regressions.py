@@ -50,8 +50,8 @@ def _router_with_failing_llm() -> TattooRouter:
     )
 
 
-def test_missing_information_keeps_sensitive_intent_low_risk() -> None:
-    """Missing intake fields keep the request low risk regardless of intent."""
+def test_sensitive_intent_overrides_missing_information_risk() -> None:
+    """Pricing and complex advice require review even during intake."""
     draft = TattooExtractionDraft(
         tattoo_idea="Client requests a price quote and complex design advice",
         style_tags=["unknown"],
@@ -72,16 +72,17 @@ def test_missing_information_keeps_sensitive_intent_low_risk() -> None:
         current_message="I need complex design advice and a price quote.",
     )
 
-    assert result.risk_level == "low"
+    assert result.risk_level == "high"
     assert result.suggested_artist == "Unclear"
     assert result.confidence_level == "low"
-    assert "reference image" in result.draft_reply
-    assert result.auto_reply_allowed is True
-    assert result.telegram_review_required is False
+    assert "studio team review" in result.draft_reply
+    assert "reference image" not in result.draft_reply
+    assert result.auto_reply_allowed is False
+    assert result.telegram_review_required is True
 
 
-def test_missing_information_keeps_price_history_low_risk() -> None:
-    """Price history does not override an incomplete intake's low risk."""
+def test_sensitive_price_history_stays_high_risk() -> None:
+    """A recent pricing request remains in staff-review mode."""
     draft = TattooExtractionDraft(
         tattoo_idea="20cm black floral tattoo",
         style_tags=["floral"],
@@ -103,11 +104,13 @@ def test_missing_information_keeps_price_history_low_risk() -> None:
         ],
     )
 
-    assert result.risk_level == "low"
+    assert result.risk_level == "high"
+    assert result.auto_reply_allowed is False
+    assert result.telegram_review_required is True
 
 
-def test_missing_information_keeps_current_price_question_low_risk() -> None:
-    """A current price question remains low risk while fields are missing."""
+def test_current_price_question_is_high_risk_while_fields_are_missing() -> None:
+    """A current pricing request cannot enter the automatic reply path."""
     draft = TattooExtractionDraft(
         tattoo_idea="20cm black floral tattoo",
         style_tags=["floral"],
@@ -122,7 +125,9 @@ def test_missing_information_keeps_current_price_question_low_risk() -> None:
         current_message="How much would this tattoo cost?",
     )
 
-    assert result.risk_level == "low"
+    assert result.risk_level == "high"
+    assert result.auto_reply_allowed is False
+    assert result.telegram_review_required is True
 
 
 def test_many_missing_fields_remain_low_risk() -> None:
@@ -222,21 +227,26 @@ def test_cold_start_does_not_force_incomplete_intake_to_high_risk() -> None:
     [
         "Can you give me a price?",
         "I want to book this tattoo.",
+        "Can I pay the deposit now?",
+        "Please cancel my appointment.",
+        "Can we reschedule this?",
         "I need to make a complaint.",
         "Please process my refund.",
+        "I need complex design advice.",
+        "I have a preferred artist.",
     ],
 )
 def test_required_high_risk_intents_disable_auto_reply(
     current_message: str,
 ) -> None:
-    """Required sensitive intents always enter Telegram review mode."""
+    """Sensitive intents override incomplete intake and require review."""
     draft = TattooExtractionDraft(
         tattoo_idea="Fine-line floral tattoo",
         style_tags=["fine-line"],
         placement="inner wrist",
         size_estimate_cm="8cm",
         color_preference="black-and-grey",
-        missing_information=[],
+        missing_information=["preferred date"],
     )
 
     result = _router_with_failing_llm().route(

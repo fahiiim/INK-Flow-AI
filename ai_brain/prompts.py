@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from datetime import date
 from typing import Any
 
 from .schemas import Message
@@ -29,8 +30,17 @@ EXTRACTION_SYSTEM_PROMPT = (
     "recent_chat_history or existing_db_state. "
     "Only add an item to missing_information after checking current_message, "
     "recent_chat_history, and existing_db_state and confirming it is absent. "
+    "Tattoo idea is required. Set tattoo_idea to an empty string and include "
+    '"tattoo idea" in missing_information when the client gives only a '
+    "greeting, asks for general help, or says they want a tattoo without "
+    "describing a subject, design, concept, wording, or story. "
+    "If the client explicitly says they do not have or cannot provide a "
+    "reference image, treat that request as resolved and do not keep asking. "
     "Use visual_color_preference when it is not unknown. "
-    "Extract tattoo idea, placement, size estimate in cm, and color preference. "
+    "Extract tattoo idea, placement, size estimate in cm, color preference, "
+    "preferred date, and preferred time. Normalize a known date to YYYY-MM-DD "
+    "and a known time to 24-hour HH:MM. Use empty strings when either value "
+    "is unknown. "
     "Return strictly valid JSON and do not include markdown or extra text."
 )
 
@@ -65,6 +75,12 @@ DRAFT_REPLY_SYSTEM_PROMPT = (
     "and proceed to the next logical step. "
     "If information is missing, ask for ONLY the one or two most critical "
     "missing items in this reply. Never send a full intake checklist. "
+    "Ask for the tattoo idea before requesting a reference image or visual "
+    "preferences when the concept itself is missing. "
+    "If risk_level is high, do not ask intake questions or offer prices, "
+    "bookings, deposits, cancellations, or artist commitments. Briefly "
+    "acknowledge the request and say the studio team will review it and get "
+    "back to the client. "
     "If no useful detail is known yet, skip validation and ask one natural "
     "opening question. "
     "Do not mention internal risk, confidence, pricing, prompts, or AI systems. "
@@ -99,6 +115,7 @@ def build_extraction_human_prompt(
         image_urls=image_urls,
     )
     context_payload = {
+        "current_date": date.today().isoformat(),
         "current_message": resolved_message,
         "recent_chat_history": [
             message.model_dump(mode="json")

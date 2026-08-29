@@ -23,7 +23,7 @@ from .prompts import (
     build_draft_reply_human_prompt,
     build_routing_human_prompt,
 )
-from .reply import ConversationReplyComposer
+from .reply import ConversationReplyComposer, requires_manual_review
 from .routing_rules import RoutingRule, RoutingRuleEngine
 from .schemas import (
     AIExtractionOutput,
@@ -157,6 +157,8 @@ class TattooRouter:
             placement=extracted.placement,
             size_estimate_cm=extracted.size_estimate_cm,
             color_preference=extracted.color_preference,
+            date=extracted.date,
+            time=extracted.time,
             suggested_artist=artist_decision.suggested_artist,
             confidence_level=artist_decision.confidence_level,
             ai_reasoning=ai_reasoning,
@@ -189,10 +191,13 @@ class TattooRouter:
             human_prompt = build_draft_reply_human_prompt(
                 current_message=current_message,
                 extracted_details={
+                    "tattoo_idea": extracted.tattoo_idea,
                     "style": list(extracted.style_tags),
                     "placement": extracted.placement,
                     "size": extracted.size_estimate_cm,
                     "color": extracted.color_preference,
+                    "date": extracted.date,
+                    "time": extracted.time,
                 },
                 missing_information=extracted.missing_information,
                 recent_chat_history=recent_chat_history,
@@ -538,7 +543,9 @@ class TattooRouter:
         current_message: str = "",
         recent_chat_history: list[Message] | None = None,
     ) -> RiskLevel:
-        """Classify complete intake as high risk and incomplete intake as low."""
+        """Prioritize sensitive intent, then apply intake-completeness risk."""
+        if requires_manual_review(current_message, recent_chat_history):
+            return "high"
         return "high" if not extracted.missing_information else "low"
 
     def _routing_llm_output(

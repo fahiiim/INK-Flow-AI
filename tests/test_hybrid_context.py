@@ -71,6 +71,7 @@ def test_current_message_overrides_database_and_state_fills_blanks() -> None:
             "color_preference": "black-and-grey",
             "reference_images": ["https://example.com/old-reference.jpg"],
             "preferred_date": "2026-08-15",
+            "preferred_time": "14:30",
         },
         recent_chat_history=history,
     )
@@ -78,6 +79,8 @@ def test_current_message_overrides_database_and_state_fills_blanks() -> None:
     assert result.size_estimate_cm == "10cm"
     assert result.placement == "inner wrist"
     assert result.color_preference == "black-and-grey"
+    assert result.date == "2026-08-15"
+    assert result.time == "14:30"
     assert result.missing_information == []
 
 
@@ -154,3 +157,46 @@ def test_provider_failure_uses_current_then_history_then_database() -> None:
     assert result.size_estimate_cm == "10cm"
     assert result.placement == "shoulder"
     assert result.color_preference == "color"
+
+
+def test_preferred_date_and_time_are_normalized_in_fallback() -> None:
+    """Scheduling details remain available when the model call fails."""
+    extractor = TattooTextExtractor(
+        llm=cast(ChatOpenAI, FailingExtractionLLM()),
+    )
+
+    result = extractor.extract(
+        current_message=(
+            "I want a fine-line lotus tattoo on 2026-09-04 at 14:30."
+        ),
+        style_tags=["fine-line"],
+        existing_db_state={},
+        recent_chat_history=[],
+    )
+
+    assert result.date == "2026-09-04"
+    assert result.time == "14:30"
+    assert "preferred date" not in result.missing_information
+    assert "preferred time" not in result.missing_information
+
+
+def test_nested_intake_supplies_preferred_date_and_time() -> None:
+    """Existing backend appointment fields populate the response contract."""
+    extractor = TattooTextExtractor(
+        llm=cast(ChatOpenAI, FailingExtractionLLM()),
+    )
+
+    result = extractor.extract(
+        current_message="I still want the lotus tattoo.",
+        style_tags=["fine-line"],
+        existing_db_state={
+            "intake": {
+                "appointment_date": "2026-09-04",
+                "appointment_time": "14:30",
+            }
+        },
+        recent_chat_history=[],
+    )
+
+    assert result.date == "2026-09-04"
+    assert result.time == "14:30"

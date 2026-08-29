@@ -38,6 +38,14 @@ class BlankExtractionLLM:
         )
 
 
+class FailingExtractionLLM:
+    """Force deterministic extraction fallback for generic requests."""
+
+    def invoke(self, messages: object) -> object:
+        """Simulate an unavailable extraction provider."""
+        raise RuntimeError("Simulated provider failure")
+
+
 def _extractor() -> TattooTextExtractor:
     """Return an extractor with no external model dependency."""
     return TattooTextExtractor(
@@ -128,6 +136,47 @@ def test_no_image_requests_reference_before_manual_visual_questions() -> None:
 
     assert "Do you have a reference image you can send?" in reply
     assert reply.count("?") == 1
+
+
+def test_generic_tattoo_request_asks_for_concept_before_reference() -> None:
+    """A vague tattoo request cannot be complete without an actual idea."""
+    extractor = TattooTextExtractor(
+        llm=cast(ChatOpenAI, FailingExtractionLLM()),
+    )
+
+    result = extractor.extract(
+        current_message="I want a tattoo.",
+        style_tags=["unknown"],
+        new_image_urls=[],
+    )
+    reply = ConversationReplyComposer().compose(
+        extracted=result,
+        current_message="I want a tattoo.",
+        recent_chat_history=[],
+        risk_level="low",
+    )
+
+    assert "tattoo idea" in result.missing_information
+    assert reply == "Got it. What tattoo idea or design do you have in mind?"
+    assert "reference image" not in reply
+
+
+def test_reference_image_decline_is_not_requested_again() -> None:
+    """An unavailable reference is resolved instead of causing a loop."""
+    result = _extractor().extract(
+        current_message="I don't have a reference image.",
+        style_tags=["unknown"],
+        new_image_urls=[],
+    )
+    reply = ConversationReplyComposer().compose(
+        extracted=result,
+        current_message="I don't have a reference image.",
+        recent_chat_history=[],
+        risk_level="low",
+    )
+
+    assert "reference images" not in result.missing_information
+    assert "reference image" not in reply.casefold()
 
 
 def test_style_stated_in_text_is_not_requested_manually() -> None:

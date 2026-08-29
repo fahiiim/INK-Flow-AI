@@ -32,30 +32,38 @@ _SCHEDULE_TERMS = (
     "tomorrow",
     "tonight",
     "preferred date",
+    "preferred time",
     " am",
     " pm",
 )
-_MANUAL_REVIEW_TERMS = (
-    "price",
-    "pricing",
-    "cost",
-    "quote",
-    "booking",
-    "book an appointment",
-    "complaint",
-    "refund",
-    "bad experience",
-    "complex design advice",
+_MANUAL_REVIEW_PATTERNS = (
+    re.compile(r"\b(?:price|pricing|cost|quote|how much|budget)\b"),
+    re.compile(r"\b(?:book|booking|booked|deposit)\b"),
+    re.compile(
+        r"\b(?:cancel|cancellation|reschedule|rescheduling|refund)\b"
+    ),
+    re.compile(
+        r"\b(?:complaint|bad experience|unhappy|dissatisfied)\b"
+    ),
+    re.compile(r"\b(?:complex design advice|design advice|medical advice)\b"),
+    re.compile(r"\b(?:specific|preferred|requested)\s+artist\b"),
+    re.compile(
+        r"\b(?:underage|minor|pregnant|pregnancy|infection|allergy|"
+        r"medical condition)\b"
+    ),
 )
 _MISSING_QUESTIONS = {
+    "tattoo idea": "What tattoo idea or design do you have in mind?",
     "size in cm": "What rough size in cm are you thinking?",
     "placement": "Where on the body would you like it?",
     "reference images": "Do you have a reference image you can send?",
     "tattoo style": "What tattoo style would you like?",
     "color preference": "Would you like black-and-grey or colour?",
-    "preferred date": "What date or time works best for you?",
+    "preferred date": "What date works best for you?",
+    "preferred time": "What time works best for you?",
 }
 _MISSING_EMAIL_REQUESTS = {
+    "tattoo idea": "Tattoo idea, design concept, wording, or story",
     "size in cm": "Approximate tattoo size in centimeters",
     "placement": "Intended body placement",
     "reference images": (
@@ -63,16 +71,39 @@ _MISSING_EMAIL_REQUESTS = {
     ),
     "tattoo style": "Preferred tattoo style",
     "color preference": "Color preference (black-and-grey or color)",
-    "preferred date": "Preferred appointment date or suitable time frame",
+    "preferred date": "Preferred appointment date",
+    "preferred time": "Preferred appointment time",
 }
 _QUESTION_MARKERS = {
+    "tattoo idea": (
+        "tattoo idea",
+        "design do",
+        "have in mind",
+        "concept",
+        "background story",
+    ),
     "size in cm": ("size", " cm"),
     "placement": ("where", "body", "placement"),
     "reference images": ("reference", "image", "photo"),
     "tattoo style": ("tattoo style", "style would", "style do"),
     "color preference": ("black-and-grey", "colour", "color"),
-    "preferred date": ("date", "time", "when"),
+    "preferred date": ("date", "day", "when"),
+    "preferred time": ("time", " am", " pm"),
 }
+
+
+def requires_manual_review(
+    current_message: str,
+    recent_chat_history: Sequence[Message] | None = None,
+) -> bool:
+    """Return whether current or recent client intent requires staff review."""
+    user_messages = [
+        message.content
+        for message in (recent_chat_history or [])
+        if message.role == "user"
+    ]
+    combined = " ".join([*user_messages, current_message]).casefold()
+    return any(pattern.search(combined) for pattern in _MANUAL_REVIEW_PATTERNS)
 
 
 class ConversationReplyComposer:
@@ -87,16 +118,18 @@ class ConversationReplyComposer:
     ) -> str:
         """Acknowledge the latest turn and ask only the next useful question."""
         history = recent_chat_history or []
-        if self._is_greeting_only(current_message):
+        manual_review = risk_level == "high" and requires_manual_review(
+            current_message,
+            history,
+        )
+        if self._is_greeting_only(current_message) and not manual_review:
             return self._greeting_reply(history)
 
         acknowledgement = self._acknowledgement(
             current_message=current_message,
             history=history,
         )
-        if risk_level == "high" and self._requires_manual_review(
-            current_message
-        ):
+        if manual_review:
             reply = (
                 f"{acknowledgement} I'll have the studio team review this "
                 "and get back to you."
@@ -264,6 +297,8 @@ class ConversationReplyComposer:
             ("Placement", extracted.placement),
             ("Approximate size", extracted.size_estimate_cm),
             ("Color preference", extracted.color_preference),
+            ("Preferred date", extracted.date),
+            ("Preferred time", extracted.time),
         ):
             if self._is_known_reply_value(value):
                 details.append((label, self._email_value(value)))
@@ -279,11 +314,6 @@ class ConversationReplyComposer:
     def _is_greeting_only(self, message: str) -> bool:
         """Return whether the latest message contains only a greeting."""
         return bool(_GREETING_PATTERN.fullmatch(message.strip()))
-
-    def _requires_manual_review(self, message: str) -> bool:
-        """Detect intents that should be handed to studio staff directly."""
-        normalized = message.casefold()
-        return any(term in normalized for term in _MANUAL_REVIEW_TERMS)
 
     def _details_already_confirmed(
         self,
@@ -397,6 +427,15 @@ class ConversationReplyComposer:
     ) -> list[str]:
         """Choose one follow-up question, or two on the first intake turn."""
         previous = self._last_assistant_message(history).casefold()
+        if (
+            "tattoo idea" in missing_information
+            and not any(
+                marker in previous
+                for marker in _QUESTION_MARKERS["tattoo idea"]
+            )
+        ):
+            return [_MISSING_QUESTIONS["tattoo idea"]]
+
         if (
             "reference images" in missing_information
             and not any(
