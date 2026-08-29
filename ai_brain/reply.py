@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from .schemas import Message, RiskLevel, TattooExtractionDraft
 
@@ -174,17 +174,12 @@ class ConversationReplyComposer:
     def compose_outlook_email(
         self,
         extracted: TattooExtractionDraft,
+        existing_db_state: Mapping[str, object] | None = None,
     ) -> str:
         """Create one professional email containing every missing request."""
         missing_information = list(extracted.missing_information)
-        subject = (
-            "Additional Information Required for Your Tattoo Inquiry"
-            if missing_information
-            else "Tattoo Inquiry Received"
-        )
         sections = [
-            f"Subject: {subject}",
-            "Hello,",
+            self._outlook_salutation(existing_db_state),
             (
                 "Thank you for contacting Tattoo Hysteria. We have received "
                 "your tattoo inquiry."
@@ -227,6 +222,27 @@ class ConversationReplyComposer:
 
         sections.append("Kind regards,\nTattoo Hysteria")
         return "\n\n".join(sections)
+
+    def _outlook_salutation(
+        self,
+        existing_db_state: Mapping[str, object] | None,
+    ) -> str:
+        """Address an Outlook lead by first name when backend data has it."""
+        state = existing_db_state or {}
+        lead = state.get("lead")
+        name: object = None
+        if isinstance(lead, Mapping):
+            name = lead.get("name")
+        if not name:
+            name = state.get("lead_name")
+        if not isinstance(name, str) or not name.strip():
+            return "Hello,"
+
+        first_name = name.strip().split(maxsplit=1)[0]
+        safe_name = re.sub(r"[^\w.'’\-]", "", first_name)
+        if not safe_name:
+            return "Hello,"
+        return f"Dear {safe_name},"
 
     def _outlook_known_details(
         self,
