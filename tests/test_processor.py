@@ -142,9 +142,8 @@ def test_automation_pause_returns_before_ai_calls() -> None:
     assert result.draft_reply == "A staff member will reply to you shortly."
     assert result.auto_reply_allowed is False
     assert result.telegram_review_required is True
-    assert outlook_result.draft_reply.startswith(
-        "Subject: Tattoo Inquiry Received\n\nHello,"
-    )
+    assert outlook_result.draft_reply.startswith("Hello,\n\n")
+    assert "Subject:" not in outlook_result.draft_reply
     assert outlook_result.draft_reply.endswith(
         "Kind regards,\nTattoo Hysteria"
     )
@@ -198,9 +197,12 @@ def test_process_inquiry_low_risk_fine_line_request() -> None:
     result = brain.process_inquiry(
         current_message="Actually make the fine-line lotus 10cm.",
         new_image_urls=["https://example.com/new-reference.jpg"],
-        existing_db_state={"size": "5cm", "placement": "inner wrist"},
+        existing_db_state={
+            "size": "5cm",
+            "placement": "inner wrist",
+            "intake": {"source": "outlook"},
+        },
         recent_chat_history=history,
-        message_source="outlook",
     )
 
     assert result.suggested_artist == "Nina"
@@ -215,6 +217,7 @@ def test_process_inquiry_low_risk_fine_line_request() -> None:
     assert extraction.calls[0]["existing_db_state"] == {
         "size": "5cm",
         "placement": "inner wrist",
+        "intake": {"source": "outlook"},
     }
     assert extraction.calls[0]["recent_chat_history"] == history
     assert len(router.calls) == 1
@@ -222,7 +225,11 @@ def test_process_inquiry_low_risk_fine_line_request() -> None:
         (
             "Actually make the fine-line lotus 10cm.",
             history,
-            {"size": "5cm", "placement": "inner wrist"},
+            {
+                "size": "5cm",
+                "placement": "inner wrist",
+                "intake": {"source": "outlook"},
+            },
             "outlook",
         )
     ]
