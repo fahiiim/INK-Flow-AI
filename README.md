@@ -54,7 +54,9 @@ Send a `POST` request to `/api/v1/inquiries/analyze` with a payload like this:
 
 Set `message_source` to `outlook` to receive a professional email draft that
 requests all missing intake details in one message. When omitted, it defaults
-to `whatsapp` and keeps the concise conversational reply format.
+to the `source` stored in `existing_db_state.intake` or
+`existing_db_state.lead`, then falls back to `whatsapp`. WhatsApp keeps the
+concise conversational reply format.
 
 Use `/api/v1/inquiries/telegram-summary` for high-risk inquiries. It returns a
 staff summary together with the generated draft reply.
