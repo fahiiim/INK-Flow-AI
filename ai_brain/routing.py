@@ -23,7 +23,7 @@ from .prompts import (
     build_draft_reply_human_prompt,
     build_routing_human_prompt,
 )
-from .reply import ConversationReplyComposer, requires_manual_review
+from .reply import ConversationReplyComposer
 from .routing_rules import RoutingRule, RoutingRuleEngine
 from .schemas import (
     AIExtractionOutput,
@@ -124,11 +124,7 @@ class TattooRouter:
         history = recent_chat_history or []
         db_state = existing_db_state or {}
         artist_decision = self._suggest_artist(extracted)
-        risk_level = self._classify_risk(
-            extracted=extracted,
-            current_message=current_message,
-            recent_chat_history=history,
-        )
+        risk_level = self._classify_risk(extracted)
 
         llm_output = self._routing_llm_output(
             artist_decision=artist_decision,
@@ -540,12 +536,8 @@ class TattooRouter:
     def _classify_risk(
         self,
         extracted: TattooExtractionDraft,
-        current_message: str = "",
-        recent_chat_history: list[Message] | None = None,
     ) -> RiskLevel:
-        """Prioritize sensitive intent, then apply intake-completeness risk."""
-        if requires_manual_review(current_message, recent_chat_history):
-            return "high"
+        """Classify only complete intakes as high risk for staff review."""
         return "high" if not extracted.missing_information else "low"
 
     def _routing_llm_output(

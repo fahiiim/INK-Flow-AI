@@ -166,6 +166,13 @@ class ConversationReplyComposer:
     ) -> str:
         """Summarize extracted facts once, unless already confirmed."""
         history = recent_chat_history or []
+        if risk_level == "high":
+            return self.compose(
+                extracted=extracted,
+                current_message=current_message,
+                recent_chat_history=history,
+                risk_level=risk_level,
+            )
         if self._is_greeting_only(current_message):
             return self.compose(
                 extracted=extracted,

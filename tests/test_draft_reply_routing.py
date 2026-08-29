@@ -185,3 +185,43 @@ def test_outlook_route_uses_email_composer_and_one_routing_llm_call() -> None:
     assert result.risk_level == "low"
     assert result.auto_reply_allowed is True
     assert len(fake_llm.calls) == 1
+
+
+def test_first_outlook_price_question_collects_missing_information() -> None:
+    """An initial cost question stays low risk until intake is complete."""
+    fake_llm = SequentialLLM([_reasoning_response()])
+    extracted = TattooExtractionDraft(
+        tattoo_idea="",
+        style_tags=["unknown"],
+        placement="",
+        size_estimate_cm="",
+        color_preference="",
+        missing_information=[
+            "tattoo idea",
+            "size in cm",
+            "placement",
+            "reference images",
+            "tattoo style",
+            "color preference",
+            "preferred date",
+            "preferred time",
+        ],
+    )
+
+    result = TattooRouter(
+        llm=cast(ChatOpenAI, fake_llm),
+        vector_store=_warm_vector_store(),
+    ).route(
+        extracted=extracted,
+        current_message="Hi, how much will a tattoo cost?",
+        existing_db_state={"lead": {"name": "Maruf Hossain"}},
+        message_source="outlook",
+    )
+
+    assert result.risk_level == "low"
+    assert result.auto_reply_allowed is True
+    assert result.telegram_review_required is False
+    assert "please reply to this email with all of the following" in (
+        result.draft_reply
+    )
+    assert result.draft_reply.count("\n- ") == 8
