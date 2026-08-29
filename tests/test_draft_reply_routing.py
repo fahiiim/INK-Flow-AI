@@ -173,13 +173,14 @@ def test_outlook_route_uses_email_composer_and_one_routing_llm_call() -> None:
     ).route(
         extracted=extracted,
         current_message="I am interested in a floral tattoo.",
+        existing_db_state={"lead": {"name": "Maruf Hossain"}},
         message_source="outlook",
     )
 
-    assert result.draft_reply.startswith(
-        "Subject: Additional Information Required for Your Tattoo Inquiry"
-    )
+    assert result.draft_reply.startswith("Dear Maruf,\n\n")
+    assert "Subject:" not in result.draft_reply
     assert result.draft_reply.count("\n- ") == 7
+    assert "Dear Maruf," in result.draft_reply
     assert result.risk_level == "low"
     assert result.auto_reply_allowed is True
     assert len(fake_llm.calls) == 1
