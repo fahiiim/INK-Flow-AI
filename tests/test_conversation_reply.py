@@ -173,12 +173,18 @@ def test_outlook_email_requests_every_missing_item_at_once() -> None:
         ],
     )
 
-    reply = ConversationReplyComposer().compose_outlook_email(extracted)
-
-    assert reply.startswith(
-        "Subject: Additional Information Required for Your Tattoo Inquiry"
+    reply = ConversationReplyComposer().compose_outlook_email(
+        extracted,
+        existing_db_state={
+            "lead": {
+                "name": "Maruf Hossain",
+                "source": "outlook",
+            }
+        },
     )
-    assert "\n\nHello,\n\n" in reply
+
+    assert reply.startswith("Dear Maruf,\n\n")
+    assert "Subject:" not in reply
     assert "please reply to this email with all of the following" in reply
     assert "- Approximate tattoo size in centimeters" in reply
     assert "- Intended body placement" in reply
@@ -203,7 +209,8 @@ def test_outlook_complete_inquiry_confirms_review_without_questions() -> None:
 
     reply = ConversationReplyComposer().compose_outlook_email(extracted)
 
-    assert reply.startswith("Subject: Tattoo Inquiry Received")
+    assert reply.startswith("Hello,\n\n")
+    assert "Subject:" not in reply
     assert "- Tattoo concept: Fine-line lotus" in reply
     assert "- Style: fine-line" in reply
     assert "- Placement: inner wrist" in reply
