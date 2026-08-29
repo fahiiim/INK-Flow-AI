@@ -29,7 +29,6 @@ from .vision import TattooVisionAnalyzer
 
 _AUTOMATION_PAUSED_DRAFT = "A staff member will reply to you shortly."
 _AUTOMATION_PAUSED_EMAIL_DRAFT = (
-    "Subject: Tattoo Inquiry Received\n\n"
     "Hello,\n\n"
     "Thank you for contacting Tattoo Hysteria. We have received your "
     "message. A member of our studio team will review it and reply as soon as "
@@ -228,8 +227,9 @@ class StudioAIBrain:
             "new_image_urls": resolved_images,
             "existing_db_state": existing_db_state or {},
             "recent_chat_history": recent_chat_history or [],
-            "message_source": message_source or "whatsapp",
         }
+        if message_source is not None:
+            payload["message_source"] = message_source
         try:
             return TattooInquiryInput.model_validate(payload)
         except ValidationError as exc:
