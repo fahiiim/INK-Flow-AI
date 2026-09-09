@@ -15,6 +15,8 @@ from pydantic import (
     model_validator,
 )
 
+from .email_cleaning import strip_quoted_email_content
+
 STYLE_TAG_OPTIONS: tuple[str, ...] = (
     "fine-line",
     "watercolor",
@@ -233,6 +235,28 @@ class TattooInquiryInput(BaseModel):
                     continue
             non_empty_messages.append(item)
         return non_empty_messages[-30:]
+
+    @model_validator(mode="after")
+    def strip_outlook_quoted_content(self) -> Self:
+        """Exclude quoted email threads from new client input and history."""
+        if self.message_source != "outlook":
+            return self
+
+        self.current_message = strip_quoted_email_content(
+            self.current_message
+        )
+        cleaned_history: list[Message] = []
+        for message in self.recent_chat_history:
+            if message.role != "user":
+                cleaned_history.append(message)
+                continue
+            cleaned_content = strip_quoted_email_content(message.content)
+            if cleaned_content:
+                cleaned_history.append(
+                    message.model_copy(update={"content": cleaned_content})
+                )
+        self.recent_chat_history = cleaned_history
+        return self
 
     @model_validator(mode="after")
     def require_text_or_image(self) -> Self:
