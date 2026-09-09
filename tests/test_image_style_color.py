@@ -96,8 +96,8 @@ def test_recognized_image_removes_style_color_and_reference_missing() -> None:
     assert "Does that sound right" in reply
 
 
-def test_unclear_image_asks_style_and_color_manually() -> None:
-    """An unclear image produces two focused visual follow-up questions."""
+def test_unclear_image_starts_with_earliest_missing_questions() -> None:
+    """An unclear image follows the configured intake order."""
     result = _extractor().extract(
         current_message="",
         style_tags=["unknown"],
@@ -114,13 +114,13 @@ def test_unclear_image_asks_style_and_color_manually() -> None:
     assert "tattoo style" in result.missing_information
     assert "color preference" in result.missing_information
     assert "reference images" not in result.missing_information
-    assert "What tattoo style would you like?" in reply
-    assert "Would you like black-and-grey or colour?" in reply
+    assert "What is your full name?" in reply
+    assert "What size would you prefer in centimetres?" in reply
     assert reply.count("?") == 2
 
 
-def test_no_image_requests_reference_before_manual_visual_questions() -> None:
-    """A missing image is requested before asking style and color directly."""
+def test_no_image_starts_with_earliest_unresolved_questions() -> None:
+    """The reply follows the required order for fields still unresolved."""
     result = _extractor().extract(
         current_message="I want a tattoo.",
         style_tags=["unknown"],
@@ -134,8 +134,9 @@ def test_no_image_requests_reference_before_manual_visual_questions() -> None:
         risk_level="low",
     )
 
-    assert "Do you have a reference image you can send?" in reply
-    assert reply.count("?") == 1
+    assert "What is your full name?" in reply
+    assert "What size would you prefer in centimetres?" in reply
+    assert reply.count("?") == 2
 
 
 def test_generic_tattoo_request_asks_for_concept_before_reference() -> None:
@@ -157,7 +158,10 @@ def test_generic_tattoo_request_asks_for_concept_before_reference() -> None:
     )
 
     assert "tattoo idea" in result.missing_information
-    assert reply == "Got it. What tattoo idea or design do you have in mind?"
+    assert reply == (
+        "Got it. What is your full name? "
+        "What is your tattoo idea or background story?"
+    )
     assert "reference image" not in reply
 
 
