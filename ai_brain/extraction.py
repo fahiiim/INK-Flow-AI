@@ -34,6 +34,11 @@ LOGGER = logging.getLogger(__name__)
 
 _IMAGE_ONLY_MESSAGE = "Client sent reference image(s) without a text caption."
 _STYLE_TAG_SET = set(STYLE_TAG_OPTIONS)
+_STYLE_TAGS_THAT_RESOLVE_PREFERENCE = _STYLE_TAG_SET - {
+    "unknown",
+    "floral",
+    "black-and-grey",
+}
 _MISSING_SET = set(MISSING_INFORMATION_OPTIONS)
 _GENERIC_TATTOO_IDEA_PATTERN = re.compile(
     r"^(?:(?:i|we|the client)\s+)?"
@@ -103,13 +108,8 @@ _STYLE_TEXT_ALIASES: dict[StyleTag, tuple[str, ...]] = {
     "fine-line": ("fine-line", "fine line", "fineline"),
     "watercolor": ("watercolor", "watercolour"),
     "minimal": ("minimal", "minimalist"),
-    "floral": ("floral", "flower"),
+    "floral": ("floral",),
     "micro-realism": ("micro-realism", "micro realism"),
-    "black-and-grey": (
-        "black-and-grey",
-        "black and grey",
-        "black and gray",
-    ),
     "calligraphy": ("calligraphy", "lettering"),
     "traditional": ("traditional",),
     "geometric": ("geometric", "geometry"),
@@ -240,6 +240,50 @@ _PROJECT_TYPE_FIELD_TERMS = (
     "continue",
     "touch-up",
     "touch up",
+)
+_TATTOO_SUBJECT_WORDS = (
+    "anchor",
+    "animal",
+    "bird",
+    "butterfly",
+    "calligraphy",
+    "dragon",
+    "eagle",
+    "flower",
+    "flowers",
+    "lettering",
+    "lotus",
+    "mandala",
+    "portrait",
+    "quote",
+    "rose",
+    "script",
+    "skull",
+    "snake",
+    "symbol",
+    "tiger",
+    "wolf",
+)
+_TATTOO_IDEA_MODIFIERS = (
+    "black",
+    "black-and-grey",
+    "black and grey",
+    "black and gray",
+    "colored",
+    "colorful",
+    "coloured",
+    "colourful",
+    "fine-line",
+    "fine line",
+    "geometric",
+    "large",
+    "minimal",
+    "minimalist",
+    "realistic",
+    "small",
+    "traditional",
+    "watercolor",
+    "watercolour",
 )
 _MONTH_NUMBERS = {
     "january": 1,
@@ -567,7 +611,10 @@ class TattooTextExtractor:
             ),
             "size in cm": self._is_blank(llm_output.size_estimate_cm),
             "placement": self._is_blank(llm_output.placement),
-            "tattoo style": not any(tag != "unknown" for tag in style_tags),
+            "tattoo style": not any(
+                tag in _STYLE_TAGS_THAT_RESOLVE_PREFERENCE
+                for tag in style_tags
+            ),
             "color preference": self._is_blank(llm_output.color_preference),
             "reference images": not (
                 new_image_urls
@@ -608,18 +655,7 @@ class TattooTextExtractor:
         recent_chat_history: list[Message],
     ) -> TattooExtractionDraft:
         """Return a safe draft when the extraction call fails."""
-        fallback_idea = (
-            ""
-            if (
-                current_message == _IMAGE_ONLY_MESSAGE
-                or self._last_assistant_asked_for_name(
-                    recent_chat_history
-                )
-            )
-            else current_message[:220]
-        )
-        if self._is_missing_tattoo_idea(fallback_idea):
-            fallback_idea = ""
+        fallback_idea = self._extract_tattoo_idea_from_text(current_message)
         fallback = _ExtractionSubset(
             client_name=self._extract_client_name_from_text(current_message),
             tattoo_idea=fallback_idea,
@@ -689,10 +725,11 @@ class TattooTextExtractor:
                 recent_chat_history=recent_chat_history,
                 existing_db_state=existing_db_state,
             ),
-            tattoo_idea=self._prefer_extracted_value(
-                llm_output.tattoo_idea,
-                existing_db_state,
-                ("tattoo_idea", "idea", "concept"),
+            tattoo_idea=self._resolve_tattoo_idea(
+                llm_value=llm_output.tattoo_idea,
+                current_message=current_message,
+                recent_chat_history=recent_chat_history,
+                existing_db_state=existing_db_state,
             ),
             placement=self._resolve_context_field(
                 llm_value=llm_output.placement,
@@ -845,10 +882,8 @@ class TattooTextExtractor:
         current_value = value_extractor(current_message)
         if current_value:
             return current_value
-        if not self._is_blank(llm_value):
-            return llm_value
         if self._mentions_field(current_message, field_terms):
-            return ""
+            return "" if self._is_blank(llm_value) else llm_value
 
         history_value = self._latest_history_value(
             recent_chat_history=recent_chat_history,
@@ -856,7 +891,10 @@ class TattooTextExtractor:
         )
         if history_value:
             return history_value
-        return self._get_state_text(existing_db_state, state_keys)
+        stored_value = self._get_state_text(existing_db_state, state_keys)
+        if stored_value:
+            return stored_value
+        return "" if self._is_blank(llm_value) else llm_value
 
     def _resolve_client_name(
         self,
@@ -925,16 +963,41 @@ class TattooTextExtractor:
                 return value
         return ""
 
-    def _prefer_extracted_value(
+    def _resolve_tattoo_idea(
         self,
-        extracted_value: str,
+        llm_value: str,
+        current_message: str,
+        recent_chat_history: list[Message],
         existing_db_state: dict[str, Any],
-        state_keys: tuple[str, ...],
     ) -> str:
-        """Prefer synthesized current context over existing database state."""
-        if not self._is_blank(extracted_value):
-            return extracted_value
-        return self._get_state_text(existing_db_state, state_keys)
+        """Update the concept only when the client actually states one."""
+        current_idea = self._extract_tattoo_idea_from_text(current_message)
+        if current_idea:
+            return current_idea
+
+        stored_idea = self._get_state_text(
+            existing_db_state,
+            ("tattoo_idea", "idea", "concept"),
+        )
+        if stored_idea:
+            return stored_idea
+
+        historical_idea = self._latest_history_value(
+            recent_chat_history,
+            self._extract_tattoo_idea_from_text,
+        )
+        if historical_idea:
+            return historical_idea
+
+        normalized_llm_value = " ".join(llm_value.split())
+        normalized_current = " ".join(current_message.split())
+        if (
+            len(normalized_llm_value) <= 120
+            and normalized_llm_value.casefold() != normalized_current.casefold()
+            and not self._is_missing_tattoo_idea(normalized_llm_value)
+        ):
+            return normalized_llm_value
+        return ""
 
     def _get_state_text(
         self,
@@ -1076,16 +1139,93 @@ class TattooTextExtractor:
             return ""
         return " ".join(matches[-1].group(1).split())
 
+    def _extract_tattoo_idea_from_text(self, text: str) -> str:
+        """Extract a design subject without treating logistics as the idea."""
+        normalized = " ".join(text.split())
+        if not normalized or normalized == _IMAGE_ONLY_MESSAGE:
+            return ""
+
+        candidates: list[tuple[int, str]] = []
+        idea_patterns = (
+            re.compile(
+                r"\b(?:tattoo\s+)?(?:idea|concept|design|background story)"
+                r"\s*(?:is|would be|:)\s+(?:a|an|the)?\s*"
+                r"(?P<idea>[^,.;!?]{1,120})",
+                flags=re.IGNORECASE,
+            ),
+            re.compile(
+                r"\btattoo\s+(?:of|featuring|with)\s+"
+                r"(?:a|an|the)?\s*(?P<idea>[^,.;!?]{1,120})",
+                flags=re.IGNORECASE,
+            ),
+            re.compile(
+                r"\b(?:want|would like|need|planning|get|getting|have)\s+"
+                r"(?:to\s+(?:get|have)\s+)?(?:a|an|the)?\s*"
+                r"(?P<idea>[^,.;!?]{1,100}?)\s+tattoo\b",
+                flags=re.IGNORECASE,
+            ),
+        )
+        for pattern in idea_patterns:
+            for match in pattern.finditer(normalized):
+                candidates.append((match.start(), match.group("idea")))
+
+        modifier_pattern = "|".join(
+            re.escape(value)
+            for value in sorted(
+                _TATTOO_IDEA_MODIFIERS,
+                key=len,
+                reverse=True,
+            )
+        )
+        subject_pattern = "|".join(
+            re.escape(value)
+            for value in sorted(
+                _TATTOO_SUBJECT_WORDS,
+                key=len,
+                reverse=True,
+            )
+        )
+        recognizable_subject = re.compile(
+            rf"\b(?P<idea>(?:(?:{modifier_pattern})\s+){{0,4}}"
+            rf"(?:{subject_pattern}))\b",
+            flags=re.IGNORECASE,
+        )
+        for match in recognizable_subject.finditer(normalized):
+            candidates.append((match.start(), match.group("idea")))
+
+        cleaned_candidates = [
+            (position, self._clean_tattoo_idea_candidate(candidate))
+            for position, candidate in candidates
+        ]
+        usable = [item for item in cleaned_candidates if item[1]]
+        if not usable:
+            return ""
+        return max(usable, key=lambda item: item[0])[1]
+
+    def _clean_tattoo_idea_candidate(self, value: str) -> str:
+        """Normalize a short extracted concept and reject generic wording."""
+        candidate = " ".join(value.split())
+        candidate = re.split(
+            r"\s+(?:on|for)\s+(?:my|the)\b|\s+instead\b",
+            candidate,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0]
+        candidate = re.sub(
+            r"^(?:a|an|the)\s+|\s+(?:please|instead)$",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        ).strip(" -")
+        if not candidate or candidate.casefold() in {"new", "new tattoo"}:
+            return ""
+        if self._is_missing_tattoo_idea(candidate):
+            return ""
+        return candidate[:1].upper() + candidate[1:120]
+
     def _extract_preferred_artist_from_text(self, text: str) -> str:
         """Extract one of the five client-selectable artist preferences."""
         normalized = " ".join(text.casefold().split())
-        if re.search(
-            r"\b(?:no\s+(?:artist\s+)?preference|any\s+artist|"
-            r"whoever\s+(?:is|you\s+think)|you\s+(?:can\s+)?choose)\b",
-            normalized,
-        ):
-            return "No preference"
-
         aliases = {
             "hoss": "Hoss",
             "nina": "Nina",
@@ -1095,6 +1235,12 @@ class TattooTextExtractor:
             "sliva": "Silva",
         }
         matches: list[tuple[int, str]] = []
+        no_preference_pattern = re.compile(
+            r"\b(?:no\s+(?:artist\s+)?preference|any\s+artist|"
+            r"whoever\s+(?:is|you\s+think)|you\s+(?:can\s+)?choose)\b"
+        )
+        for match in no_preference_pattern.finditer(normalized):
+            matches.append((match.start(), "No preference"))
         for alias, display_name in aliases.items():
             for match in re.finditer(rf"\b{alias}\b", normalized):
                 matches.append((match.start(), display_name))
