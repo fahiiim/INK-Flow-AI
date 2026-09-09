@@ -194,3 +194,29 @@ def test_style_stated_in_text_is_not_requested_manually() -> None:
 
     assert result.style_tags == ["fine-line"]
     assert "tattoo style" not in result.missing_information
+
+
+def test_flower_subject_alone_does_not_resolve_preferred_style() -> None:
+    """A design subject is not mistaken for a tattoo technique preference."""
+    result = _extractor().extract(
+        current_message="I want a colorful flower tattoo.",
+        style_tags=["floral"],
+        visual_color_preference="color",
+        new_image_urls=["https://example.com/flower.jpg"],
+    )
+
+    assert result.tattoo_idea == "Colorful flower"
+    assert "tattoo style" in result.missing_information
+
+
+def test_color_choice_alone_does_not_resolve_preferred_style() -> None:
+    """Black-and-grey answers the colour question, not the style question."""
+    result = _extractor().extract(
+        current_message="I want it black and grey.",
+        style_tags=["unknown"],
+        visual_color_preference="unknown",
+        new_image_urls=[],
+    )
+
+    assert result.color_preference == "black-and-grey"
+    assert "tattoo style" in result.missing_information
