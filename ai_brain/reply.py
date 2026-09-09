@@ -8,7 +8,6 @@ from collections.abc import Mapping, Sequence
 from .schemas import (
     ARTIST_PREFERENCE_OPTIONS,
     MISSING_INFORMATION_OPTIONS,
-    SERVICE_OPTIONS,
     Message,
     RiskLevel,
     TattooExtractionDraft,
@@ -60,14 +59,9 @@ _MANUAL_REVIEW_PATTERNS = (
         r"medical condition)\b"
     ),
 )
-_SERVICE_CHOICE_LINES = tuple(
-    f"{code} - {description}"
-    for code, description in SERVICE_OPTIONS.items()
-)
-_SERVICE_CHOICE_QUESTION = (
-    "Can you visit the studio, or do you need an online appointment? "
-    "Please reply with one service code:\n"
-    + "\n".join(_SERVICE_CHOICE_LINES)
+_APPOINTMENT_TYPE_QUESTION = (
+    "Would you prefer an online appointment or a studio visit? "
+    "Please reply with online or studio_visit."
 )
 _MISSING_QUESTIONS = {
     "client full name": "What is your full name?",
@@ -84,7 +78,7 @@ _MISSING_QUESTIONS = {
         + ", ".join(ARTIST_PREFERENCE_OPTIONS[:-1])
         + f", {ARTIST_PREFERENCE_OPTIONS[-1]}, or say no preference."
     ),
-    "service type": _SERVICE_CHOICE_QUESTION,
+    "appointment type": _APPOINTMENT_TYPE_QUESTION,
     "preferred dates or availability": (
         "What are your preferred dates or general availability?"
     ),
@@ -95,11 +89,6 @@ _MISSING_QUESTIONS = {
     "preferred time": "What time works best for you?",
 }
 _MISSING_EMAIL_REQUESTS = dict(_MISSING_QUESTIONS)
-_MISSING_EMAIL_REQUESTS["service type"] = (
-    "Can you visit the studio, or do you need an online appointment? "
-    "Please choose one service code:\n"
-    + "\n".join(f"  - {line}" for line in _SERVICE_CHOICE_LINES)
-)
 _QUESTION_MARKERS = {
     "client full name": ("full name", "your name"),
     "tattoo idea": (
@@ -112,7 +101,11 @@ _QUESTION_MARKERS = {
     "tattoo style": ("tattoo style",),
     "reference images": ("reference", "inspiration image"),
     "preferred artist": ("preferred artist", "choose hoss"),
-    "service type": ("service code", "visit the studio", "online appointment"),
+    "appointment type": (
+        "appointment type",
+        "studio visit",
+        "online appointment",
+    ),
     "preferred dates or availability": ("preferred dates", "availability"),
     "tattoo project type": (
         "new tattoo",
@@ -379,11 +372,8 @@ class ConversationReplyComposer:
                 and self._is_known_reply_value(value)
             ):
                 details.append((label, self._email_value(value)))
-        if extracted.service_code and "service type" not in missing:
-            service = SERVICE_OPTIONS[extracted.service_code]
-            details.append(
-                ("Selected service", f"{extracted.service_code} - {service}")
-            )
+        if extracted.appointment_type and "appointment type" not in missing:
+            details.append(("Appointment type", extracted.appointment_type))
         return details
 
     def _email_value(self, value: str, limit: int = 240) -> str:
