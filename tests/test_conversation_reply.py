@@ -37,7 +37,7 @@ def _incomplete_draft() -> TattooExtractionDraft:
             "tattoo style",
             "reference images",
             "preferred artist",
-            "service type",
+            "appointment type",
             "preferred dates or availability",
             "tattoo project type",
         ],
@@ -185,15 +185,15 @@ def test_whatsapp_preferred_artist_question_lists_five_artists() -> None:
     )
 
 
-def test_whatsapp_service_question_lists_every_service_code() -> None:
-    """The visit-or-online question includes every configured service option."""
+def test_whatsapp_appointment_type_question_lists_two_options() -> None:
+    """The appointment question exposes only the two supported values."""
     extracted = TattooExtractionDraft(
         tattoo_idea="Fine-line flower",
         style_tags=["fine-line", "floral"],
         placement="wrist",
         size_estimate_cm="5cm",
         color_preference="black-and-grey",
-        missing_information=["service type"],
+        missing_information=["appointment type"],
     )
 
     reply = ConversationReplyComposer().compose(
@@ -203,9 +203,12 @@ def test_whatsapp_service_question_lists_every_service_code() -> None:
         risk_level="low",
     )
 
-    assert "Can you visit the studio, or do you need an online appointment?" in reply
-    for code in ("CH", "CN", "OCH", "OCN", "RH", "RN", "ORH", "ORN", "TH", "TN"):
-        assert f"\n{code} - " in reply
+    assert reply.endswith(
+        "Would you prefer an online appointment or a studio visit? "
+        "Please reply with online or studio_visit."
+    )
+    assert "service code" not in reply.casefold()
+    assert "CH -" not in reply
 
 
 def test_outlook_email_requests_every_missing_item_at_once() -> None:
@@ -225,7 +228,7 @@ def test_outlook_email_requests_every_missing_item_at_once() -> None:
             "tattoo style",
             "reference images",
             "preferred artist",
-            "service type",
+            "appointment type",
             "preferred dates or availability",
             "tattoo project type",
         ],
@@ -252,9 +255,10 @@ def test_outlook_email_requests_every_missing_item_at_once() -> None:
     assert "- What tattoo style would you prefer?" in reply
     assert "- Could you share any reference or inspiration images?" in reply
     assert "Please choose Hoss, Nina, Lana, Sandra, Silva" in reply
-    assert "- Can you visit the studio" in reply
-    assert "  - CH - In-person consultation with Hoss" in reply
-    assert "  - TN - Tattoo session with Nina" in reply
+    assert "- Would you prefer an online appointment or a studio visit?" in reply
+    assert "Please reply with online or studio_visit." in reply
+    assert "service code" not in reply.casefold()
+    assert "CH -" not in reply
     assert "- What are your preferred dates or general availability?" in reply
     assert "new tattoo, cover-up, continuation, or touch-up" in reply
     assert "Thank you for contacting Tattoo Hysteria." in reply
@@ -273,7 +277,7 @@ def test_outlook_complete_inquiry_confirms_review_without_questions() -> None:
         time="14:30",
         client_name="Maruf Hossain",
         preferred_artist="Silva",
-        service_code="CH",
+        appointment_type="studio_visit",
         availability="Weekends",
         tattoo_project_type="new tattoo",
         missing_information=[],
@@ -289,7 +293,7 @@ def test_outlook_complete_inquiry_confirms_review_without_questions() -> None:
     assert "- Preferred date: 2026-09-04" in reply
     assert "- Preferred time: 14:30" in reply
     assert "- Preferred artist: Silva" in reply
-    assert "- Selected service: CH - In-person consultation with Hoss" in reply
+    assert "- Appointment type: studio_visit" in reply
     assert "- Availability: Weekends" in reply
     assert "- Tattoo project type: new tattoo" in reply
     assert "all of the following information" not in reply
