@@ -36,6 +36,11 @@ EXTRACTION_SYSTEM_PROMPT = (
     '"tattoo idea" in missing_information when the client gives only a '
     "greeting, asks for general help, or says they want a tattoo without "
     "describing a subject, design, concept, wording, or story. "
+    "tattoo_idea must be a concise design concept, never the full client "
+    "message, email headers, quoted correspondence, or logistical answers. "
+    "A flower or floral subject does not by itself answer the preferred tattoo "
+    "style question; require an explicit technique/style or clear visual "
+    "style evidence. "
     "If the client explicitly says they do not have or cannot provide a "
     "reference image, treat that request as resolved and do not keep asking. "
     "Use visual_color_preference when it is not unknown. Extract client_name, "
