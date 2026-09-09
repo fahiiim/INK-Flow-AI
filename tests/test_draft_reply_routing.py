@@ -7,10 +7,9 @@ from types import SimpleNamespace
 from typing import cast
 from unittest.mock import Mock
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
 
-from ai_brain.prompts import DRAFT_REPLY_SYSTEM_PROMPT
 from ai_brain.routing import TattooRouter
 from ai_brain.schemas import Message, TattooExtractionDraft
 from ai_brain.vector_store import VectorStoreManager
@@ -37,15 +36,32 @@ def _warm_vector_store() -> VectorStoreManager:
     return cast(VectorStoreManager, vector_store)
 
 
-def _complete_draft() -> TattooExtractionDraft:
-    """Return extracted details ready for client validation."""
+def _availability_missing_draft() -> TattooExtractionDraft:
+    """Return extracted details with only availability outstanding."""
     return TattooExtractionDraft(
         tattoo_idea="Fine-line lotus",
         style_tags=["fine-line"],
         placement="inner wrist",
         size_estimate_cm="5cm",
         color_preference="black-and-grey",
-        missing_information=["preferred date"],
+        missing_information=["preferred dates or availability"],
+    )
+
+
+def _fully_complete_draft() -> TattooExtractionDraft:
+    """Return a complete intake ready for staff review."""
+    return TattooExtractionDraft(
+        client_name="Samim Osman",
+        tattoo_idea="Fine-line lotus",
+        style_tags=["fine-line"],
+        placement="inner wrist",
+        size_estimate_cm="5cm",
+        color_preference="black-and-grey",
+        preferred_artist="Nina",
+        service_code="CN",
+        availability="Weekends",
+        tattoo_project_type="new tattoo",
+        missing_information=[],
     )
 
 
@@ -59,47 +75,32 @@ def _reasoning_response() -> str:
     )
 
 
-def test_router_accepts_strict_validation_draft_reply() -> None:
-    """A valid draft string is returned unchanged to the caller."""
-    draft_reply = (
+def test_router_uses_exact_question_for_incomplete_whatsapp_intake() -> None:
+    """Incomplete WhatsApp replies use the controlled intake wording."""
+    expected_reply = (
         "Got it, a 5cm black-and-grey fine-line tattoo on your inner wrist. "
         "Does that sound right, or would you like to change anything? "
-        "What date or time works best for you?"
+        "What are your preferred dates or general availability?"
     )
-    fake_llm = SequentialLLM(
-        [
-            _reasoning_response(),
-            json.dumps({"draft_reply": draft_reply}),
-        ]
-    )
+    fake_llm = SequentialLLM([_reasoning_response()])
 
     result = TattooRouter(
         llm=cast(ChatOpenAI, fake_llm),
         vector_store=_warm_vector_store(),
     ).route(
-        extracted=_complete_draft(),
+        extracted=_availability_missing_draft(),
         current_message="I want a 5cm fine-line lotus on my wrist.",
         recent_chat_history=[],
         existing_db_state={"lead_name": "Samim"},
     )
 
-    assert result.draft_reply == draft_reply
-    assert len(fake_llm.calls) == 2
-    assert isinstance(fake_llm.calls[1][0], SystemMessage)
-    assert fake_llm.calls[1][0].content == DRAFT_REPLY_SYSTEM_PROMPT
+    assert result.draft_reply == expected_reply
+    assert len(fake_llm.calls) == 1
 
 
-def test_confirmed_history_is_available_to_draft_prompt() -> None:
-    """Confirmed details produce a next-step reply without revalidation."""
-    confirmed_reply = (
-        "Perfect, thanks for confirming. What date would work best for you?"
-    )
-    fake_llm = SequentialLLM(
-        [
-            _reasoning_response(),
-            json.dumps({"draft_reply": confirmed_reply}),
-        ]
-    )
+def test_confirmed_history_continues_with_exact_next_question() -> None:
+    """Confirmed details continue directly to the next required question."""
+    fake_llm = SequentialLLM([_reasoning_response()])
     history = [
         Message(role="user", content="Yes, those details are correct."),
     ]
@@ -108,18 +109,17 @@ def test_confirmed_history_is_available_to_draft_prompt() -> None:
         llm=cast(ChatOpenAI, fake_llm),
         vector_store=_warm_vector_store(),
     ).route(
-        extracted=_complete_draft(),
+        extracted=_availability_missing_draft(),
         current_message="Yes, those details are correct.",
         recent_chat_history=history,
         existing_db_state={"preferred_date": "not provided"},
     )
 
-    assert result.draft_reply == confirmed_reply
+    assert result.draft_reply == (
+        "Got it. What are your preferred dates or general availability?"
+    )
     assert "Please confirm" not in result.draft_reply
-    human_message = fake_llm.calls[1][1]
-    assert isinstance(human_message, HumanMessage)
-    assert "Yes, those details are correct." in str(human_message.content)
-    assert '"preferred_date": "not provided"' in str(human_message.content)
+    assert len(fake_llm.calls) == 1
 
 
 def test_non_string_draft_reply_uses_validated_fallback() -> None:
@@ -135,14 +135,13 @@ def test_non_string_draft_reply_uses_validated_fallback() -> None:
         llm=cast(ChatOpenAI, fake_llm),
         vector_store=_warm_vector_store(),
     ).route(
-        extracted=_complete_draft(),
+        extracted=_fully_complete_draft(),
         current_message="I want this tattoo.",
         recent_chat_history=[],
     )
 
     assert result.draft_reply != "123"
-    assert "Got it, a 5cm black-and-grey fine-line tattoo" in result.draft_reply
-    assert "Does that sound right" in result.draft_reply
+    assert "studio team review" in result.draft_reply
     assert "- Style:" not in result.draft_reply
     assert "Unknown" not in result.draft_reply
     assert result.draft_reply.count("?") <= 2
@@ -160,11 +159,13 @@ def test_outlook_route_uses_email_composer_and_one_routing_llm_call() -> None:
         missing_information=[
             "size in cm",
             "placement",
-            "reference images",
-            "tattoo style",
             "color preference",
-            "preferred date",
-            "preferred time",
+            "tattoo style",
+            "reference images",
+            "preferred artist",
+            "service type",
+            "preferred dates or availability",
+            "tattoo project type",
         ],
     )
 
@@ -180,7 +181,7 @@ def test_outlook_route_uses_email_composer_and_one_routing_llm_call() -> None:
 
     assert result.draft_reply.startswith("Dear Maruf,\n\n")
     assert "Subject:" not in result.draft_reply
-    assert result.draft_reply.count("\n- ") == 8
+    assert result.draft_reply.count("\n- ") == 10
     assert "Dear Maruf," in result.draft_reply
     assert result.risk_level == "low"
     assert result.auto_reply_allowed is True
@@ -200,11 +201,13 @@ def test_first_outlook_price_question_collects_missing_information() -> None:
             "tattoo idea",
             "size in cm",
             "placement",
-            "reference images",
-            "tattoo style",
             "color preference",
-            "preferred date",
-            "preferred time",
+            "tattoo style",
+            "reference images",
+            "preferred artist",
+            "service type",
+            "preferred dates or availability",
+            "tattoo project type",
         ],
     )
 
@@ -224,4 +227,4 @@ def test_first_outlook_price_question_collects_missing_information() -> None:
     assert "please reply to this email with all of the following" in (
         result.draft_reply
     )
-    assert result.draft_reply.count("\n- ") == 8
+    assert result.draft_reply.count("\n- ") == 10
