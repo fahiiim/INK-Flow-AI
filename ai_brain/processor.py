@@ -131,6 +131,7 @@ class StudioAIBrain:
     ) -> AIExtractionOutput:
         """Return a deterministic hold response without calling AI services."""
         return AIExtractionOutput(
+            client_name="",
             tattoo_idea=inquiry.current_message,
             style_tags=["unknown"],
             placement="",
@@ -138,6 +139,10 @@ class StudioAIBrain:
             color_preference="",
             date="",
             time="",
+            preferred_artist="",
+            service_code="",
+            availability="",
+            tattoo_project_type="",
             suggested_artist="Unclear",
             confidence_level="low",
             ai_reasoning=(
