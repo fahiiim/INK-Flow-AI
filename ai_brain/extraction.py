@@ -18,12 +18,12 @@ from .errors import AnalysisPipelineError
 from .llm import get_chat_model
 from .prompts import EXTRACTION_SYSTEM_PROMPT, build_extraction_human_prompt
 from .schemas import (
+    AppointmentType,
     MISSING_INFORMATION_OPTIONS,
     STYLE_TAG_OPTIONS,
     Message,
     MissingInformationItem,
     PreferredArtist,
-    ServiceCode,
     StyleTag,
     TattooExtractionDraft,
     TattooProjectType,
@@ -209,14 +209,13 @@ _ARTIST_FIELD_TERMS = (
     "sliva",
     "no preference",
 )
-_SERVICE_FIELD_TERMS = (
-    "consultation",
+_APPOINTMENT_TYPE_FIELD_TERMS = (
     "appointment",
-    "revision session",
-    "tattoo session",
     "in-person",
     "in person",
     "online",
+    "studio visit",
+    "studio_visit",
     "visit the studio",
 )
 _AVAILABILITY_FIELD_TERMS = (
@@ -304,9 +303,9 @@ class _ExtractionSubset(BaseModel):
         default="",
         description="Preferred artist or No preference.",
     )
-    service_code: ServiceCode = Field(
+    appointment_type: AppointmentType = Field(
         default="",
-        description="Selected service code.",
+        description="Online or studio-visit appointment preference.",
     )
     availability: str = Field(
         default="",
@@ -408,7 +407,7 @@ class TattooTextExtractor:
                 date=resolved_output.date,
                 time=resolved_output.time,
                 preferred_artist=resolved_output.preferred_artist,
-                service_code=resolved_output.service_code,
+                appointment_type=resolved_output.appointment_type,
                 availability=resolved_output.availability,
                 tattoo_project_type=resolved_output.tattoo_project_type,
                 missing_information=missing_information,
@@ -535,7 +534,7 @@ class TattooTextExtractor:
             date=llm_output.date,
             time=llm_output.time,
             preferred_artist=llm_output.preferred_artist,
-            service_code=llm_output.service_code,
+            appointment_type=llm_output.appointment_type,
             availability=llm_output.availability,
             tattoo_project_type=llm_output.tattoo_project_type,
             missing_information=llm_output.missing_information,
@@ -580,7 +579,7 @@ class TattooTextExtractor:
                 or self._declines_reference_image(conversation_text)
             ),
             "preferred artist": self._is_blank(llm_output.preferred_artist),
-            "service type": self._is_blank(llm_output.service_code),
+            "appointment type": self._is_blank(llm_output.appointment_type),
             "preferred dates or availability": self._is_blank(
                 llm_output.availability
             ),
@@ -632,7 +631,9 @@ class TattooTextExtractor:
             preferred_artist=self._extract_preferred_artist_from_text(
                 current_message
             ),
-            service_code=self._extract_service_code_from_text(current_message),
+            appointment_type=self._extract_appointment_type_from_text(
+                current_message
+            ),
             availability=self._extract_availability_from_text(current_message),
             tattoo_project_type=self._extract_project_type_from_text(
                 current_message
@@ -667,7 +668,7 @@ class TattooTextExtractor:
             date=resolved_fallback.date,
             time=resolved_fallback.time,
             preferred_artist=resolved_fallback.preferred_artist,
-            service_code=resolved_fallback.service_code,
+            appointment_type=resolved_fallback.appointment_type,
             availability=resolved_fallback.availability,
             tattoo_project_type=resolved_fallback.tattoo_project_type,
             missing_information=missing,
@@ -775,22 +776,20 @@ class TattooTextExtractor:
                     field_terms=_ARTIST_FIELD_TERMS,
                 )
             ),
-            service_code=self._normalize_service_code(
+            appointment_type=self._normalize_appointment_type(
                 self._resolve_context_field(
-                    llm_value=self._normalize_service_code(
-                        llm_output.service_code
+                    llm_value=self._normalize_appointment_type(
+                        llm_output.appointment_type
                     ),
                     current_message=current_message,
                     recent_chat_history=recent_chat_history,
                     existing_db_state=existing_db_state,
                     state_keys=(
-                        "service_code",
-                        "consultation_code",
                         "appointment_type",
-                        "service_type",
+                        "appointment_mode",
                     ),
-                    value_extractor=self._extract_service_code_from_text,
-                    field_terms=_SERVICE_FIELD_TERMS,
+                    value_extractor=self._extract_appointment_type_from_text,
+                    field_terms=_APPOINTMENT_TYPE_FIELD_TERMS,
                 )
             ),
             availability=self._resolve_context_field(
@@ -1102,11 +1101,6 @@ class TattooTextExtractor:
         if matches:
             return max(matches, key=lambda item: item[0])[1]
 
-        service_code = self._extract_service_code_from_text(text)
-        if service_code.endswith("H"):
-            return "Hoss"
-        if service_code.endswith("N"):
-            return "Nina"
         return ""
 
     def _normalize_preferred_artist(self, value: str) -> str:
@@ -1116,39 +1110,30 @@ class TattooTextExtractor:
         extracted = self._extract_preferred_artist_from_text(value)
         return extracted
 
-    def _extract_service_code_from_text(self, text: str) -> str:
-        """Extract a service code from a code or natural-language choice."""
-        code_match = re.search(
-            r"\b(OCH|OCN|ORH|ORN|CH|CN|RH|RN|TH|TN)\b",
-            text,
-            flags=re.IGNORECASE,
-        )
-        if code_match:
-            return code_match.group(1).upper()
-
+    def _extract_appointment_type_from_text(self, text: str) -> str:
+        """Extract the client's online or studio-visit preference."""
         normalized = " ".join(text.casefold().split())
-        artist = ""
-        if re.search(r"\bhoss\b", normalized):
-            artist = "H"
-        elif re.search(r"\bnina\b", normalized):
-            artist = "N"
-        if not artist:
+        matches: list[tuple[int, str]] = []
+        patterns = (
+            (r"\bonline(?:\s+(?:appointment|consultation))?\b", "online"),
+            (
+                r"\b(?:studio[_ -]?visit|visit(?:ing)?\s+(?:the\s+)?studio|"
+                r"come\s+to\s+(?:the\s+)?studio|in[- ]person)\b",
+                "studio_visit",
+            ),
+        )
+        for pattern, appointment_type in patterns:
+            for match in re.finditer(pattern, normalized):
+                matches.append((match.start(), appointment_type))
+        if not matches:
             return ""
+        return max(matches, key=lambda item: item[0])[1]
 
-        is_online = bool(re.search(r"\bonline\b", normalized))
-        if re.search(r"\brevision(?:\s+session)?\b", normalized):
-            return f"OR{artist}" if is_online else f"R{artist}"
-        if re.search(r"\btattoo\s+session\b", normalized):
-            return f"T{artist}"
-        if re.search(r"\b(?:consultation|appointment)\b", normalized):
-            return f"OC{artist}" if is_online else f"C{artist}"
-        return ""
-
-    def _normalize_service_code(self, value: str) -> str:
-        """Normalize a selected service to its uppercase public code."""
+    def _normalize_appointment_type(self, value: str) -> str:
+        """Normalize the appointment preference to the public taxonomy."""
         if self._is_blank(value):
             return ""
-        return self._extract_service_code_from_text(value)
+        return self._extract_appointment_type_from_text(value)
 
     def _extract_project_type_from_text(self, text: str) -> str:
         """Extract the tattoo project category requested by the client."""
