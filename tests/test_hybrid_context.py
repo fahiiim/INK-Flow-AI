@@ -72,6 +72,10 @@ def test_current_message_overrides_database_and_state_fills_blanks() -> None:
             "reference_images": ["https://example.com/old-reference.jpg"],
             "preferred_date": "2026-08-15",
             "preferred_time": "14:30",
+            "preferred_artist": "Silva",
+            "service_code": "CH",
+            "tattoo_project_type": "new tattoo",
+            "lead": {"name": "Maruf Hossain"},
         },
         recent_chat_history=history,
     )
@@ -81,6 +85,11 @@ def test_current_message_overrides_database_and_state_fills_blanks() -> None:
     assert result.color_preference == "black-and-grey"
     assert result.date == "2026-08-15"
     assert result.time == "14:30"
+    assert result.client_name == "Maruf Hossain"
+    assert result.preferred_artist == "Silva"
+    assert result.service_code == "CH"
+    assert result.availability == "2026-08-15"
+    assert result.tattoo_project_type == "new tattoo"
     assert result.missing_information == []
 
 
@@ -176,8 +185,7 @@ def test_preferred_date_and_time_are_normalized_in_fallback() -> None:
 
     assert result.date == "2026-09-04"
     assert result.time == "14:30"
-    assert "preferred date" not in result.missing_information
-    assert "preferred time" not in result.missing_information
+    assert "preferred dates or availability" not in result.missing_information
 
 
 def test_nested_intake_supplies_preferred_date_and_time() -> None:
@@ -200,3 +208,72 @@ def test_nested_intake_supplies_preferred_date_and_time() -> None:
 
     assert result.date == "2026-09-04"
     assert result.time == "14:30"
+
+
+def test_full_intake_fields_are_extracted_from_one_client_message() -> None:
+    """Every new required answer can be retained without another question."""
+    extractor = TattooTextExtractor(
+        llm=cast(ChatOpenAI, FailingExtractionLLM()),
+    )
+
+    result = extractor.extract(
+        current_message=(
+            "My full name is Alex Morgan. I want a new tattoo of a "
+            "fine-line black and grey rose, 10 cm on my forearm. I prefer "
+            "Silva and choose CH. I am available on 2026-09-18 at 14:30."
+        ),
+        style_tags=["fine-line"],
+        new_image_urls=["https://example.com/rose-reference.jpg"],
+        existing_db_state={},
+        recent_chat_history=[],
+    )
+
+    assert result.client_name == "Alex Morgan"
+    assert result.size_estimate_cm == "10 cm"
+    assert result.placement == "forearm"
+    assert result.color_preference == "black-and-grey"
+    assert result.preferred_artist == "Silva"
+    assert result.service_code == "CH"
+    assert result.availability == "2026-09-18 at 14:30"
+    assert result.tattoo_project_type == "new tattoo"
+    assert result.date == "2026-09-18"
+    assert result.time == "14:30"
+    assert result.missing_information == []
+
+
+def test_price_only_opening_still_requires_tattoo_idea() -> None:
+    """A first-message cost question is not mistaken for a design concept."""
+    extractor = TattooTextExtractor(
+        llm=cast(ChatOpenAI, FailingExtractionLLM()),
+    )
+
+    result = extractor.extract(
+        current_message="Hi, how much will a tattoo cost?",
+        style_tags=["unknown"],
+        existing_db_state={"lead": {"name": "Maruf Hossain"}},
+        recent_chat_history=[],
+    )
+
+    assert result.client_name == "Maruf Hossain"
+    assert "client full name" not in result.missing_information
+    assert "tattoo idea" in result.missing_information
+
+
+def test_short_name_answer_is_resolved_from_question_context() -> None:
+    """A bare full-name reply is retained during deterministic fallback."""
+    extractor = TattooTextExtractor(
+        llm=cast(ChatOpenAI, FailingExtractionLLM()),
+    )
+
+    result = extractor.extract(
+        current_message="Maruf Hossain",
+        style_tags=["unknown"],
+        existing_db_state={},
+        recent_chat_history=[
+            Message(role="assistant", content="What is your full name?"),
+        ],
+    )
+
+    assert result.client_name == "Maruf Hossain"
+    assert "client full name" not in result.missing_information
+    assert "tattoo idea" in result.missing_information
