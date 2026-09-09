@@ -7,7 +7,13 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from ai_brain.schemas import AIExtractionOutput, TattooInquiryInput
+from ai_brain.schemas import (
+    ARTIST_PREFERENCE_OPTIONS,
+    MISSING_INFORMATION_OPTIONS,
+    SERVICE_OPTIONS,
+    AIExtractionOutput,
+    TattooInquiryInput,
+)
 
 
 def _valid_output_payload() -> dict[str, Any]:
@@ -20,6 +26,11 @@ def _valid_output_payload() -> dict[str, Any]:
         "color_preference": "black-and-grey",
         "date": "2026-09-04",
         "time": "14:30",
+        "client_name": "Maruf Hossain",
+        "preferred_artist": "Silva",
+        "service_code": "CH",
+        "availability": "Weekends",
+        "tattoo_project_type": "new tattoo",
         "suggested_artist": "Nina",
         "confidence_level": "high",
         "ai_reasoning": "Fine-line work matches Nina.",
@@ -115,6 +126,9 @@ def test_input_rejects_request_without_text_or_image() -> None:
         ("style_tags", []),
         ("date", "2026-02-30"),
         ("time", "2:30 PM"),
+        ("preferred_artist", "Marcus"),
+        ("service_code", "INVALID"),
+        ("tattoo_project_type", "removal"),
     ],
 )
 def test_output_rejects_values_outside_contract(
@@ -148,6 +162,42 @@ def test_output_includes_empty_scheduling_fields_when_unknown() -> None:
 
     assert result.date == ""
     assert result.time == ""
+
+
+def test_required_intake_and_choice_options_match_studio_workflow() -> None:
+    """The public intake taxonomy matches the configured client questions."""
+    assert MISSING_INFORMATION_OPTIONS == (
+        "client full name",
+        "tattoo idea",
+        "size in cm",
+        "placement",
+        "color preference",
+        "tattoo style",
+        "reference images",
+        "preferred artist",
+        "service type",
+        "preferred dates or availability",
+        "tattoo project type",
+    )
+    assert ARTIST_PREFERENCE_OPTIONS == (
+        "Hoss",
+        "Nina",
+        "Lana",
+        "Sandra",
+        "Silva",
+    )
+    assert SERVICE_OPTIONS == {
+        "CH": "In-person consultation with Hoss",
+        "CN": "In-person consultation with Nina",
+        "OCH": "Online consultation with Hoss",
+        "OCN": "Online consultation with Nina",
+        "RH": "In-person revision session with Hoss",
+        "RN": "In-person revision session with Nina",
+        "ORH": "Online revision session with Hoss",
+        "ORN": "Online revision session with Nina",
+        "TH": "Tattoo session with Hoss",
+        "TN": "Tattoo session with Nina",
+    }
 
 
 def test_high_risk_output_rejects_auto_reply_delivery() -> None:
