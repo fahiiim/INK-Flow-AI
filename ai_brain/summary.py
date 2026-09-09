@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from .schemas import AIExtractionOutput, TattooInquiryInput
+from .schemas import AIExtractionOutput, SERVICE_OPTIONS, TattooInquiryInput
 
 
 class HighRiskSummaryBuilder:
@@ -21,7 +21,7 @@ class HighRiskSummaryBuilder:
             raise ValueError("A Telegram summary requires high risk.")
 
         state = inquiry.existing_db_state
-        client = self._client_description(state)
+        client = self._client_description(state, analysis.client_name)
         idea = self._clean_text(analysis.tattoo_idea)
         if idea:
             opening = (
@@ -34,11 +34,25 @@ class HighRiskSummaryBuilder:
         design_description = self._design_description(analysis)
         if design_description:
             sentences.append(design_description)
+        if analysis.tattoo_project_type:
+            sentences.append(
+                f"The client identified this as a {analysis.tattoo_project_type}."
+            )
         sentences.append(self._reference_description(inquiry))
 
         appointment = self._appointment_description(analysis)
         if appointment:
             sentences.append(appointment)
+        if analysis.service_code:
+            sentences.append(
+                "The selected service is "
+                f"{analysis.service_code} - "
+                f"{SERVICE_OPTIONS[analysis.service_code]}."
+            )
+        if analysis.preferred_artist:
+            sentences.append(
+                f"The client's artist preference is {analysis.preferred_artist}."
+            )
 
         current_message = self._clean_text(inquiry.current_message)
         if current_message:
@@ -81,6 +95,7 @@ class HighRiskSummaryBuilder:
     def _client_description(
         self,
         state: dict[str, Any],
+        extracted_client_name: str = "",
     ) -> str:
         """Describe known client identity and contact details naturally."""
         name = self._state_value(state, "lead_name", "name")
@@ -93,7 +108,7 @@ class HighRiskSummaryBuilder:
         )
         email = self._state_value(state, "lead_email", "email")
 
-        client = name or "The client"
+        client = name or extracted_client_name or "The client"
         details: list[str] = []
         if lead_id:
             details.append(f"lead ID {lead_id}")
@@ -144,6 +159,8 @@ class HighRiskSummaryBuilder:
 
     def _appointment_description(self, analysis: AIExtractionOutput) -> str:
         """Describe known preferred scheduling information."""
+        if analysis.availability:
+            return f"The client's stated availability is {analysis.availability}."
         if analysis.date and analysis.time:
             return (
                 f"The preferred appointment is {analysis.date} at "
