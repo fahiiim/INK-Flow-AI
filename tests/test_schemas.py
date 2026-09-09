@@ -10,7 +10,6 @@ from pydantic import ValidationError
 from ai_brain.schemas import (
     ARTIST_PREFERENCE_OPTIONS,
     MISSING_INFORMATION_OPTIONS,
-    SERVICE_OPTIONS,
     AIExtractionOutput,
     TattooInquiryInput,
 )
@@ -28,7 +27,7 @@ def _valid_output_payload() -> dict[str, Any]:
         "time": "14:30",
         "client_name": "Maruf Hossain",
         "preferred_artist": "Silva",
-        "service_code": "CH",
+        "appointment_type": "studio_visit",
         "availability": "Weekends",
         "tattoo_project_type": "new tattoo",
         "suggested_artist": "Nina",
@@ -127,7 +126,7 @@ def test_input_rejects_request_without_text_or_image() -> None:
         ("date", "2026-02-30"),
         ("time", "2:30 PM"),
         ("preferred_artist", "Marcus"),
-        ("service_code", "INVALID"),
+        ("appointment_type", "hybrid"),
         ("tattoo_project_type", "removal"),
     ],
 )
@@ -147,6 +146,15 @@ def test_output_rejects_extra_fields() -> None:
     """Unknown response fields cannot silently enter the backend contract."""
     payload = _valid_output_payload()
     payload["unexpected"] = True
+
+    with pytest.raises(ValidationError):
+        AIExtractionOutput.model_validate(payload)
+
+
+def test_output_rejects_removed_service_code_field() -> None:
+    """The retired ten-code service model cannot enter API responses."""
+    payload = _valid_output_payload()
+    payload["service_code"] = "CH"
 
     with pytest.raises(ValidationError):
         AIExtractionOutput.model_validate(payload)
@@ -175,7 +183,7 @@ def test_required_intake_and_choice_options_match_studio_workflow() -> None:
         "tattoo style",
         "reference images",
         "preferred artist",
-        "service type",
+        "appointment type",
         "preferred dates or availability",
         "tattoo project type",
     )
@@ -186,18 +194,6 @@ def test_required_intake_and_choice_options_match_studio_workflow() -> None:
         "Sandra",
         "Silva",
     )
-    assert SERVICE_OPTIONS == {
-        "CH": "In-person consultation with Hoss",
-        "CN": "In-person consultation with Nina",
-        "OCH": "Online consultation with Hoss",
-        "OCN": "Online consultation with Nina",
-        "RH": "In-person revision session with Hoss",
-        "RN": "In-person revision session with Nina",
-        "ORH": "Online revision session with Hoss",
-        "ORN": "Online revision session with Nina",
-        "TH": "Tattoo session with Hoss",
-        "TN": "Tattoo session with Nina",
-    }
 
 
 def test_high_risk_output_rejects_auto_reply_delivery() -> None:
