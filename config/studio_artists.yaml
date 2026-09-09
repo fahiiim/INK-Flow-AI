@@ -31,7 +31,7 @@ artists:
     is_active: true
 
   - artist_key: sliva
-    display_name: Sliva
+    display_name: Silva
     specialties:
       - calligraphy
       - geometric
