@@ -29,15 +29,39 @@ STYLE_TAG_OPTIONS: tuple[str, ...] = (
 )
 
 MISSING_INFORMATION_OPTIONS: tuple[str, ...] = (
+    "client full name",
     "tattoo idea",
     "size in cm",
     "placement",
-    "reference images",
-    "tattoo style",
     "color preference",
-    "preferred date",
-    "preferred time",
+    "tattoo style",
+    "reference images",
+    "preferred artist",
+    "service type",
+    "preferred dates or availability",
+    "tattoo project type",
 )
+
+ARTIST_PREFERENCE_OPTIONS: tuple[str, ...] = (
+    "Hoss",
+    "Nina",
+    "Lana",
+    "Sandra",
+    "Silva",
+)
+
+SERVICE_OPTIONS: dict[str, str] = {
+    "CH": "In-person consultation with Hoss",
+    "CN": "In-person consultation with Nina",
+    "OCH": "Online consultation with Hoss",
+    "OCN": "Online consultation with Nina",
+    "RH": "In-person revision session with Hoss",
+    "RN": "In-person revision session with Nina",
+    "ORH": "Online revision session with Hoss",
+    "ORN": "Online revision session with Nina",
+    "TH": "Tattoo session with Hoss",
+    "TN": "Tattoo session with Nina",
+}
 
 MESSAGE_SOURCE_OPTIONS: tuple[str, ...] = (
     "whatsapp",
@@ -76,14 +100,49 @@ ConfidenceLevel = Literal["high", "medium", "low"]
 RiskLevel = Literal["low", "high"]
 MessageSource = Literal["whatsapp", "outlook", "vcita", "other"]
 VisualColorPreference = Literal["black-and-grey", "color", "unknown"]
+PreferredArtist = Literal[
+    "",
+    "Hoss",
+    "Nina",
+    "Lana",
+    "Sandra",
+    "Silva",
+    "No preference",
+]
+ServiceCode = Literal[
+    "",
+    "CH",
+    "CN",
+    "OCH",
+    "OCN",
+    "RH",
+    "RN",
+    "ORH",
+    "ORN",
+    "TH",
+    "TN",
+]
+TattooProjectType = Literal[
+    "",
+    "new tattoo",
+    "cover-up",
+    "continuation",
+    "touch-up",
+]
 
 MissingInformationItem = Literal[
+    "client full name",
     "tattoo idea",
     "size in cm",
     "placement",
-    "reference images",
-    "tattoo style",
     "color preference",
+    "tattoo style",
+    "reference images",
+    "preferred artist",
+    "service type",
+    "preferred dates or availability",
+    "tattoo project type",
+    # Legacy values remain accepted while existing backend records migrate.
     "preferred date",
     "preferred time",
 ]
@@ -224,6 +283,10 @@ class TattooExtractionDraft(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
+    client_name: str = Field(
+        default="",
+        description="Client's full name.",
+    )
     tattoo_idea: str = Field(
         description="Core tattoo concept extracted from client text.",
     )
@@ -248,12 +311,30 @@ class TattooExtractionDraft(BaseModel):
         default="",
         description="Preferred appointment time in 24-hour HH:MM format.",
     )
+    preferred_artist: PreferredArtist = Field(
+        default="",
+        description="Client's preferred artist or No preference.",
+    )
+    service_code: ServiceCode = Field(
+        default="",
+        description="Selected studio service code.",
+    )
+    availability: str = Field(
+        default="",
+        description="Preferred dates or general availability.",
+    )
+    tattoo_project_type: TattooProjectType = Field(
+        default="",
+        description="New tattoo, cover-up, continuation, or touch-up.",
+    )
     missing_information: list[MissingInformationItem] = Field(
         default_factory=list,
         description=(
             "Missing intake items from the required checklist: "
-            "tattoo idea, size in cm, placement, reference images, "
-            "tattoo style, color preference, preferred date, preferred time."
+            "client full name, tattoo idea, size in cm, placement, color "
+            "preference, tattoo style, reference images, preferred artist, "
+            "service type, preferred dates or availability, tattoo project "
+            "type."
         ),
     )
 
@@ -275,6 +356,10 @@ class AIExtractionOutput(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
+    client_name: str = Field(
+        default="",
+        description="Client's full name.",
+    )
     tattoo_idea: str = Field(
         description="Short summary of the tattoo request from the client.",
     )
@@ -298,6 +383,22 @@ class AIExtractionOutput(BaseModel):
     time: str = Field(
         default="",
         description="Preferred appointment time in 24-hour HH:MM format.",
+    )
+    preferred_artist: PreferredArtist = Field(
+        default="",
+        description="Client's preferred artist or No preference.",
+    )
+    service_code: ServiceCode = Field(
+        default="",
+        description="Selected studio service code.",
+    )
+    availability: str = Field(
+        default="",
+        description="Preferred dates or general availability.",
+    )
+    tattoo_project_type: TattooProjectType = Field(
+        default="",
+        description="New tattoo, cover-up, continuation, or touch-up.",
     )
     suggested_artist: SuggestedArtist = Field(
         description="Configured artist display name or Unclear.",
