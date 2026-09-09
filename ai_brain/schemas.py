@@ -37,7 +37,7 @@ MISSING_INFORMATION_OPTIONS: tuple[str, ...] = (
     "tattoo style",
     "reference images",
     "preferred artist",
-    "service type",
+    "appointment type",
     "preferred dates or availability",
     "tattoo project type",
 )
@@ -49,19 +49,6 @@ ARTIST_PREFERENCE_OPTIONS: tuple[str, ...] = (
     "Sandra",
     "Silva",
 )
-
-SERVICE_OPTIONS: dict[str, str] = {
-    "CH": "In-person consultation with Hoss",
-    "CN": "In-person consultation with Nina",
-    "OCH": "Online consultation with Hoss",
-    "OCN": "Online consultation with Nina",
-    "RH": "In-person revision session with Hoss",
-    "RN": "In-person revision session with Nina",
-    "ORH": "Online revision session with Hoss",
-    "ORN": "Online revision session with Nina",
-    "TH": "Tattoo session with Hoss",
-    "TN": "Tattoo session with Nina",
-}
 
 MESSAGE_SOURCE_OPTIONS: tuple[str, ...] = (
     "whatsapp",
@@ -109,19 +96,7 @@ PreferredArtist = Literal[
     "Silva",
     "No preference",
 ]
-ServiceCode = Literal[
-    "",
-    "CH",
-    "CN",
-    "OCH",
-    "OCN",
-    "RH",
-    "RN",
-    "ORH",
-    "ORN",
-    "TH",
-    "TN",
-]
+AppointmentType = Literal["", "online", "studio_visit"]
 TattooProjectType = Literal[
     "",
     "new tattoo",
@@ -139,7 +114,7 @@ MissingInformationItem = Literal[
     "tattoo style",
     "reference images",
     "preferred artist",
-    "service type",
+    "appointment type",
     "preferred dates or availability",
     "tattoo project type",
     # Legacy values remain accepted while existing backend records migrate.
@@ -315,9 +290,9 @@ class TattooExtractionDraft(BaseModel):
         default="",
         description="Client's preferred artist or No preference.",
     )
-    service_code: ServiceCode = Field(
+    appointment_type: AppointmentType = Field(
         default="",
-        description="Selected studio service code.",
+        description="Online or studio-visit appointment preference.",
     )
     availability: str = Field(
         default="",
@@ -333,7 +308,7 @@ class TattooExtractionDraft(BaseModel):
             "Missing intake items from the required checklist: "
             "client full name, tattoo idea, size in cm, placement, color "
             "preference, tattoo style, reference images, preferred artist, "
-            "service type, preferred dates or availability, tattoo project "
+            "appointment type, preferred dates or availability, tattoo project "
             "type."
         ),
     )
@@ -388,9 +363,9 @@ class AIExtractionOutput(BaseModel):
         default="",
         description="Client's preferred artist or No preference.",
     )
-    service_code: ServiceCode = Field(
+    appointment_type: AppointmentType = Field(
         default="",
-        description="Selected studio service code.",
+        description="Online or studio-visit appointment preference.",
     )
     availability: str = Field(
         default="",
