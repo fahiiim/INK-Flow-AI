@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from .schemas import AIExtractionOutput, SERVICE_OPTIONS, TattooInquiryInput
+from .schemas import AIExtractionOutput, TattooInquiryInput
 
 
 class HighRiskSummaryBuilder:
@@ -43,12 +43,10 @@ class HighRiskSummaryBuilder:
         appointment = self._appointment_description(analysis)
         if appointment:
             sentences.append(appointment)
-        if analysis.service_code:
-            sentences.append(
-                "The selected service is "
-                f"{analysis.service_code} - "
-                f"{SERVICE_OPTIONS[analysis.service_code]}."
-            )
+        if analysis.appointment_type == "online":
+            sentences.append("The client prefers an online appointment.")
+        elif analysis.appointment_type == "studio_visit":
+            sentences.append("The client prefers to visit the studio.")
         if analysis.preferred_artist:
             sentences.append(
                 f"The client's artist preference is {analysis.preferred_artist}."
