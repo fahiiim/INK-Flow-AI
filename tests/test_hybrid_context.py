@@ -73,7 +73,7 @@ def test_current_message_overrides_database_and_state_fills_blanks() -> None:
             "preferred_date": "2026-08-15",
             "preferred_time": "14:30",
             "preferred_artist": "Silva",
-            "service_code": "CH",
+            "appointment_type": "studio_visit",
             "tattoo_project_type": "new tattoo",
             "lead": {"name": "Maruf Hossain"},
         },
@@ -87,7 +87,7 @@ def test_current_message_overrides_database_and_state_fills_blanks() -> None:
     assert result.time == "14:30"
     assert result.client_name == "Maruf Hossain"
     assert result.preferred_artist == "Silva"
-    assert result.service_code == "CH"
+    assert result.appointment_type == "studio_visit"
     assert result.availability == "2026-08-15"
     assert result.tattoo_project_type == "new tattoo"
     assert result.missing_information == []
@@ -220,7 +220,8 @@ def test_full_intake_fields_are_extracted_from_one_client_message() -> None:
         current_message=(
             "My full name is Alex Morgan. I want a new tattoo of a "
             "fine-line black and grey rose, 10 cm on my forearm. I prefer "
-            "Silva and choose CH. I am available on 2026-09-18 at 14:30."
+            "Silva and need an online appointment. I am available on "
+            "2026-09-18 at 14:30."
         ),
         style_tags=["fine-line"],
         new_image_urls=["https://example.com/rose-reference.jpg"],
@@ -233,7 +234,7 @@ def test_full_intake_fields_are_extracted_from_one_client_message() -> None:
     assert result.placement == "forearm"
     assert result.color_preference == "black-and-grey"
     assert result.preferred_artist == "Silva"
-    assert result.service_code == "CH"
+    assert result.appointment_type == "online"
     assert result.availability == "2026-09-18 at 14:30"
     assert result.tattoo_project_type == "new tattoo"
     assert result.date == "2026-09-18"
