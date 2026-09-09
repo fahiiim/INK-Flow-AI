@@ -5,7 +5,14 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 
-from .schemas import Message, RiskLevel, TattooExtractionDraft
+from .schemas import (
+    ARTIST_PREFERENCE_OPTIONS,
+    MISSING_INFORMATION_OPTIONS,
+    SERVICE_OPTIONS,
+    Message,
+    RiskLevel,
+    TattooExtractionDraft,
+)
 
 _GREETING_PATTERN = re.compile(
     r"^(?:hi|hello|hey|good morning|good afternoon|good evening)"
@@ -33,6 +40,7 @@ _SCHEDULE_TERMS = (
     "tonight",
     "preferred date",
     "preferred time",
+    "availability",
     " am",
     " pm",
 )
@@ -52,41 +60,66 @@ _MANUAL_REVIEW_PATTERNS = (
         r"medical condition)\b"
     ),
 )
+_SERVICE_CHOICE_LINES = tuple(
+    f"{code} - {description}"
+    for code, description in SERVICE_OPTIONS.items()
+)
+_SERVICE_CHOICE_QUESTION = (
+    "Can you visit the studio, or do you need an online appointment? "
+    "Please reply with one service code:\n"
+    + "\n".join(_SERVICE_CHOICE_LINES)
+)
 _MISSING_QUESTIONS = {
-    "tattoo idea": "What tattoo idea or design do you have in mind?",
-    "size in cm": "What rough size in cm are you thinking?",
-    "placement": "Where on the body would you like it?",
-    "reference images": "Do you have a reference image you can send?",
-    "tattoo style": "What tattoo style would you like?",
-    "color preference": "Would you like black-and-grey or colour?",
+    "client full name": "What is your full name?",
+    "tattoo idea": "What is your tattoo idea or background story?",
+    "size in cm": "What size would you prefer in centimetres?",
+    "placement": "Where on your body would you like the tattoo?",
+    "color preference": "Would you like colour or black and grey?",
+    "tattoo style": "What tattoo style would you prefer?",
+    "reference images": (
+        "Could you share any reference or inspiration images?"
+    ),
+    "preferred artist": (
+        "Do you have a preferred artist? Please choose "
+        + ", ".join(ARTIST_PREFERENCE_OPTIONS[:-1])
+        + f", {ARTIST_PREFERENCE_OPTIONS[-1]}, or say no preference."
+    ),
+    "service type": _SERVICE_CHOICE_QUESTION,
+    "preferred dates or availability": (
+        "What are your preferred dates or general availability?"
+    ),
+    "tattoo project type": (
+        "Is this a new tattoo, cover-up, continuation, or touch-up?"
+    ),
     "preferred date": "What date works best for you?",
     "preferred time": "What time works best for you?",
 }
-_MISSING_EMAIL_REQUESTS = {
-    "tattoo idea": "Tattoo idea, design concept, wording, or story",
-    "size in cm": "Approximate tattoo size in centimeters",
-    "placement": "Intended body placement",
-    "reference images": (
-        "Reference images showing the design or style you have in mind"
-    ),
-    "tattoo style": "Preferred tattoo style",
-    "color preference": "Color preference (black-and-grey or color)",
-    "preferred date": "Preferred appointment date",
-    "preferred time": "Preferred appointment time",
-}
+_MISSING_EMAIL_REQUESTS = dict(_MISSING_QUESTIONS)
+_MISSING_EMAIL_REQUESTS["service type"] = (
+    "Can you visit the studio, or do you need an online appointment? "
+    "Please choose one service code:\n"
+    + "\n".join(f"  - {line}" for line in _SERVICE_CHOICE_LINES)
+)
 _QUESTION_MARKERS = {
+    "client full name": ("full name", "your name"),
     "tattoo idea": (
         "tattoo idea",
-        "design do",
-        "have in mind",
-        "concept",
         "background story",
     ),
-    "size in cm": ("size", " cm"),
-    "placement": ("where", "body", "placement"),
-    "reference images": ("reference", "image", "photo"),
-    "tattoo style": ("tattoo style", "style would", "style do"),
-    "color preference": ("black-and-grey", "colour", "color"),
+    "size in cm": ("size", "centimetres", "centimeters"),
+    "placement": ("where on your body", "placement"),
+    "color preference": ("black and grey", "colour", "color"),
+    "tattoo style": ("tattoo style",),
+    "reference images": ("reference", "inspiration image"),
+    "preferred artist": ("preferred artist", "choose hoss"),
+    "service type": ("service code", "visit the studio", "online appointment"),
+    "preferred dates or availability": ("preferred dates", "availability"),
+    "tattoo project type": (
+        "new tattoo",
+        "cover-up",
+        "continuation",
+        "touch-up",
+    ),
     "preferred date": ("date", "day", "when"),
     "preferred time": ("time", " am", " pm"),
 }
@@ -200,7 +233,7 @@ class ConversationReplyComposer:
         questions = self._select_questions(
             missing_information=extracted.missing_information,
             history=history,
-        )
+        )[:1]
         reply_parts = [
             summary,
             "Does that sound right, or would you like to change anything?",
@@ -219,7 +252,10 @@ class ConversationReplyComposer:
         """Create one professional email containing every missing request."""
         missing_information = list(extracted.missing_information)
         sections = [
-            self._outlook_salutation(existing_db_state),
+            self._outlook_salutation(
+                existing_db_state,
+                extracted.client_name,
+            ),
             (
                 "Thank you for contacting Tattoo Hysteria. We have received "
                 "your tattoo inquiry."
@@ -266,6 +302,7 @@ class ConversationReplyComposer:
     def _outlook_salutation(
         self,
         existing_db_state: Mapping[str, object] | None,
+        extracted_client_name: str = "",
     ) -> str:
         """Address an Outlook lead by first name when backend data has it."""
         state = existing_db_state or {}
@@ -275,6 +312,8 @@ class ConversationReplyComposer:
             name = lead.get("name")
         if not name:
             name = state.get("lead_name")
+        if not name:
+            name = extracted_client_name
         if not isinstance(name, str) or not name.strip():
             return "Hello,"
 
@@ -290,7 +329,16 @@ class ConversationReplyComposer:
     ) -> list[tuple[str, str]]:
         """Return known intake facts as concise professional email rows."""
         details: list[tuple[str, str]] = []
-        if self._is_known_reply_value(extracted.tattoo_idea):
+        missing = set(extracted.missing_information)
+        if (
+            "client full name" not in missing
+            and self._is_known_reply_value(extracted.client_name)
+        ):
+            details.append(("Client name", extracted.client_name))
+        if (
+            "tattoo idea" not in missing
+            and self._is_known_reply_value(extracted.tattoo_idea)
+        ):
             details.append(
                 ("Tattoo concept", self._email_value(extracted.tattoo_idea))
             )
@@ -298,17 +346,44 @@ class ConversationReplyComposer:
         style_tags = [
             tag for tag in extracted.style_tags if tag != "unknown"
         ]
-        if style_tags:
+        if style_tags and "tattoo style" not in missing:
             details.append(("Style", ", ".join(style_tags)))
-        for label, value in (
-            ("Placement", extracted.placement),
-            ("Approximate size", extracted.size_estimate_cm),
-            ("Color preference", extracted.color_preference),
-            ("Preferred date", extracted.date),
-            ("Preferred time", extracted.time),
+        for missing_item, label, value in (
+            ("placement", "Placement", extracted.placement),
+            ("size in cm", "Approximate size", extracted.size_estimate_cm),
+            (
+                "color preference",
+                "Color preference",
+                extracted.color_preference,
+            ),
+            ("preferred date", "Preferred date", extracted.date),
+            ("preferred time", "Preferred time", extracted.time),
+            (
+                "preferred artist",
+                "Preferred artist",
+                extracted.preferred_artist,
+            ),
+            (
+                "preferred dates or availability",
+                "Availability",
+                extracted.availability,
+            ),
+            (
+                "tattoo project type",
+                "Tattoo project type",
+                extracted.tattoo_project_type,
+            ),
         ):
-            if self._is_known_reply_value(value):
+            if (
+                missing_item not in missing
+                and self._is_known_reply_value(value)
+            ):
                 details.append((label, self._email_value(value)))
+        if extracted.service_code and "service type" not in missing:
+            service = SERVICE_OPTIONS[extracted.service_code]
+            details.append(
+                ("Selected service", f"{extracted.service_code} - {service}")
+            )
         return details
 
     def _email_value(self, value: str, limit: int = 240) -> str:
@@ -395,13 +470,11 @@ class ConversationReplyComposer:
         }
 
     def _greeting_reply(self, history: list[Message]) -> str:
-        """Start naturally without sending the full intake checklist."""
-        replies = (
-            "Hey! What kind of tattoo are you thinking about?",
-            "Hi! Tell me a little about the tattoo you have in mind.",
+        """Start the required intake sequence with the client's full name."""
+        return self._avoid_exact_repeat(
+            "Hi! What is your full name?",
+            history,
         )
-        index = self._assistant_message_count(history) % len(replies)
-        return self._avoid_exact_repeat(replies[index], history)
 
     def _acknowledgement(
         self,
@@ -434,44 +507,24 @@ class ConversationReplyComposer:
     ) -> list[str]:
         """Choose one follow-up question, or two on the first intake turn."""
         previous = self._last_assistant_message(history).casefold()
-        if (
-            "tattoo idea" in missing_information
-            and not any(
-                marker in previous
-                for marker in _QUESTION_MARKERS["tattoo idea"]
-            )
-        ):
-            return [_MISSING_QUESTIONS["tattoo idea"]]
-
-        if (
-            "reference images" in missing_information
-            and not any(
-                marker in previous
-                for marker in _QUESTION_MARKERS["reference images"]
-            )
-        ):
-            return [_MISSING_QUESTIONS["reference images"]]
-
-        unresolved_visual_fields = [
+        canonical = [
             item
-            for item in ("tattoo style", "color preference")
+            for item in MISSING_INFORMATION_OPTIONS
             if item in missing_information
         ]
-        if unresolved_visual_fields:
-            limit = 1 if self._assistant_message_count(history) else 2
-            return [
-                _MISSING_QUESTIONS[item]
-                for item in unresolved_visual_fields[:limit]
-            ]
+        legacy = [
+            item for item in missing_information if item not in canonical
+        ]
+        ordered_missing = [*canonical, *legacy]
         not_recently_asked = [
             item
-            for item in missing_information
+            for item in ordered_missing
             if not any(
                 marker in previous
                 for marker in _QUESTION_MARKERS[item]
             )
         ]
-        candidates = not_recently_asked or missing_information
+        candidates = not_recently_asked or ordered_missing
         limit = 1 if self._assistant_message_count(history) else 2
         return [_MISSING_QUESTIONS[item] for item in candidates[:limit]]
 
