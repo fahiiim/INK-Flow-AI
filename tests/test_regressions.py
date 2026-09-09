@@ -75,7 +75,8 @@ def test_sensitive_intent_does_not_override_missing_information() -> None:
     assert result.risk_level == "low"
     assert result.suggested_artist == "Unclear"
     assert result.confidence_level == "low"
-    assert "reference image" in result.draft_reply
+    assert "What size would you prefer in centimetres?" in result.draft_reply
+    assert "Where on your body would you like the tattoo?" in result.draft_reply
     assert result.auto_reply_allowed is True
     assert result.telegram_review_required is False
 
