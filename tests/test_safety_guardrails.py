@@ -103,7 +103,10 @@ def test_draft_reply_natural_tone() -> None:
         placement="inner wrist",
         size_estimate_cm="5cm",
         color_preference="",
-        missing_information=["color preference", "preferred date"],
+        missing_information=[
+            "color preference",
+            "preferred dates or availability",
+        ],
     )
 
     result = router.route(
@@ -114,8 +117,9 @@ def test_draft_reply_natural_tone() -> None:
 
     normalized_reply = result.draft_reply.casefold()
     assert result.draft_reply.startswith(
-        "Got it, a 5cm fine-line lotus on your inner wrist!"
+        "Got it, a 5cm fine-line tattoo on your inner wrist."
     )
+    assert "Would you like colour or black and grey?" in result.draft_reply
     assert "unknown" not in normalized_reply
     assert "none" not in normalized_reply
     assert "n/a" not in normalized_reply
@@ -123,4 +127,4 @@ def test_draft_reply_natural_tone() -> None:
     assert "style:" not in normalized_reply
     assert "placement:" not in normalized_reply
     assert result.draft_reply.count("?") <= 2
-    assert len(mocked_llm.calls) == 2
+    assert len(mocked_llm.calls) == 1
