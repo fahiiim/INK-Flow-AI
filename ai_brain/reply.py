@@ -61,7 +61,7 @@ _MANUAL_REVIEW_PATTERNS = (
 )
 _APPOINTMENT_TYPE_QUESTION = (
     "Would you prefer an online appointment or a studio visit? "
-    "Please reply with online or studio_visit."
+    "Please reply with online or studio visit."
 )
 _MISSING_QUESTIONS = {
     "client full name": "What is your full name?",
@@ -370,11 +370,37 @@ class ConversationReplyComposer:
             if (
                 missing_item not in missing
                 and self._is_known_reply_value(value)
+                and not (
+                    missing_item == "preferred dates or availability"
+                    and self._availability_duplicates_schedule(
+                        extracted,
+                    )
+                )
             ):
                 details.append((label, self._email_value(value)))
         if extracted.appointment_type and "appointment type" not in missing:
-            details.append(("Appointment type", extracted.appointment_type))
+            details.append(
+                (
+                    "Appointment type",
+                    extracted.appointment_type.replace("_", " ").capitalize(),
+                )
+            )
         return details
+
+    def _availability_duplicates_schedule(
+        self,
+        extracted: TattooExtractionDraft,
+    ) -> bool:
+        """Avoid repeating an exact date/time as general availability."""
+        availability = " ".join(extracted.availability.split()).casefold()
+        if not availability:
+            return False
+        schedule_values = {extracted.date.casefold()}
+        if extracted.date and extracted.time:
+            schedule_values.add(
+                f"{extracted.date} at {extracted.time}".casefold()
+            )
+        return availability in schedule_values
 
     def _email_value(self, value: str, limit: int = 240) -> str:
         """Keep a potentially long extracted value within reply limits."""
