@@ -140,7 +140,7 @@ class StudioAIBrain:
             date="",
             time="",
             preferred_artist="",
-            service_code="",
+            appointment_type="",
             availability="",
             tattoo_project_type="",
             suggested_artist="Unclear",
