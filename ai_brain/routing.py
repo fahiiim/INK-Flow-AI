@@ -148,6 +148,7 @@ class TattooRouter:
         )
 
         return AIExtractionOutput(
+            client_name=extracted.client_name,
             tattoo_idea=extracted.tattoo_idea,
             style_tags=extracted.style_tags,
             placement=extracted.placement,
@@ -155,6 +156,10 @@ class TattooRouter:
             color_preference=extracted.color_preference,
             date=extracted.date,
             time=extracted.time,
+            preferred_artist=extracted.preferred_artist,
+            service_code=extracted.service_code,
+            availability=extracted.availability,
+            tattoo_project_type=extracted.tattoo_project_type,
             suggested_artist=artist_decision.suggested_artist,
             confidence_level=artist_decision.confidence_level,
             ai_reasoning=ai_reasoning,
@@ -181,6 +186,13 @@ class TattooRouter:
                 extracted=extracted,
                 existing_db_state=existing_db_state,
             )
+        if extracted.missing_information:
+            return self._reply_composer.compose_validation(
+                extracted=extracted,
+                current_message=current_message,
+                recent_chat_history=recent_chat_history,
+                risk_level=risk_level,
+            )
 
         try:
             format_instructions = self._draft_parser.get_format_instructions()
@@ -194,6 +206,10 @@ class TattooRouter:
                     "color": extracted.color_preference,
                     "date": extracted.date,
                     "time": extracted.time,
+                    "preferred_artist": extracted.preferred_artist,
+                    "service_code": extracted.service_code,
+                    "availability": extracted.availability,
+                    "tattoo_project_type": extracted.tattoo_project_type,
                 },
                 missing_information=extracted.missing_information,
                 recent_chat_history=recent_chat_history,
