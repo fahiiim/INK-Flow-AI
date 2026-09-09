@@ -56,7 +56,13 @@ Set `message_source` to `outlook` to receive a professional email draft that
 requests all missing intake details in one message. When omitted, it defaults
 to the `source` stored in `existing_db_state.intake` or
 `existing_db_state.lead`, then falls back to `whatsapp`. WhatsApp keeps the
-concise conversational reply format.
+concise conversational reply format. Outlook and Gmail quoted reply threads
+are removed before extraction so previous studio questions cannot be mistaken
+for new client answers.
+
+The structured `appointment_type` response field is either `online`,
+`studio_visit`, or an empty string while it is still unknown. Client-facing
+replies display these choices naturally as “online” and “studio visit”.
 
 Use `/api/v1/inquiries/telegram-summary` for high-risk inquiries. It returns a
 staff summary together with the generated draft reply.
