@@ -205,7 +205,7 @@ def test_whatsapp_appointment_type_question_lists_two_options() -> None:
 
     assert reply.endswith(
         "Would you prefer an online appointment or a studio visit? "
-        "Please reply with online or studio_visit."
+        "Please reply with online or studio visit."
     )
     assert "service code" not in reply.casefold()
     assert "CH -" not in reply
@@ -256,7 +256,8 @@ def test_outlook_email_requests_every_missing_item_at_once() -> None:
     assert "- Could you share any reference or inspiration images?" in reply
     assert "Please choose Hoss, Nina, Lana, Sandra, Silva" in reply
     assert "- Would you prefer an online appointment or a studio visit?" in reply
-    assert "Please reply with online or studio_visit." in reply
+    assert "Please reply with online or studio visit." in reply
+    assert "studio_visit" not in reply
     assert "service code" not in reply.casefold()
     assert "CH -" not in reply
     assert "- What are your preferred dates or general availability?" in reply
@@ -293,8 +294,34 @@ def test_outlook_complete_inquiry_confirms_review_without_questions() -> None:
     assert "- Preferred date: 2026-09-04" in reply
     assert "- Preferred time: 14:30" in reply
     assert "- Preferred artist: Silva" in reply
-    assert "- Appointment type: studio_visit" in reply
+    assert "- Appointment type: Studio visit" in reply
+    assert "studio_visit" not in reply
     assert "- Availability: Weekends" in reply
     assert "- Tattoo project type: new tattoo" in reply
     assert "all of the following information" not in reply
     assert "contact you with the next steps" in reply
+
+
+def test_outlook_hides_internal_enum_and_duplicate_availability() -> None:
+    """Client email uses natural labels and shows an exact schedule once."""
+    extracted = TattooExtractionDraft(
+        client_name="Fahim Sarker",
+        tattoo_idea="Colorful flower",
+        style_tags=["fine-line"],
+        placement="hand",
+        size_estimate_cm="3 cm",
+        color_preference="color",
+        date="2026-09-12",
+        time="14:30",
+        preferred_artist="Hoss",
+        appointment_type="studio_visit",
+        availability="2026-09-12 at 14:30",
+        tattoo_project_type="new tattoo",
+        missing_information=[],
+    )
+
+    reply = ConversationReplyComposer().compose_outlook_email(extracted)
+
+    assert "- Appointment type: Studio visit" in reply
+    assert "studio_visit" not in reply
+    assert "- Availability:" not in reply
