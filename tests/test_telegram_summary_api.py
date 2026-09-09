@@ -50,6 +50,7 @@ def _analysis(risk_level: str) -> AIExtractionOutput:
             "color_preference": "black-and-grey",
             "date": "2026-09-04",
             "time": "14:30",
+            "appointment_type": "online",
             "suggested_artist": "Hoss",
             "confidence_level": "high",
             "ai_reasoning": "Large traditional work and pricing need review.",
@@ -111,6 +112,7 @@ def test_high_risk_endpoint_returns_summary_then_draft_reply() -> None:
     assert "measures approximately 30cm" in body["summary"]
     assert "is intended for the back" in body["summary"]
     assert "preferred appointment is 2026-09-04 at 14:30" in body["summary"]
+    assert "client prefers an online appointment" in body["summary"]
     assert "No new reference images were provided" in body["summary"]
     assert "remaining information needed is reference images" in body["summary"]
     assert "Hoss is the suggested artist with high confidence" in body["summary"]
