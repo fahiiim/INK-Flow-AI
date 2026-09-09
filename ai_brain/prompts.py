@@ -40,10 +40,10 @@ EXTRACTION_SYSTEM_PROMPT = (
     "reference image, treat that request as resolved and do not keep asking. "
     "Use visual_color_preference when it is not unknown. Extract client_name, "
     "tattoo idea, placement, size estimate in cm, color preference, preferred "
-    "artist, service_code, availability, tattoo_project_type, preferred date, "
+    "artist, appointment_type, availability, tattoo_project_type, preferred date, "
     "and preferred time. preferred_artist must be Hoss, Nina, Lana, Sandra, "
-    "Silva, No preference, or an empty string. service_code must be one of CH, "
-    "CN, OCH, OCN, RH, RN, ORH, ORN, TH, TN, or an empty string. "
+    "Silva, No preference, or an empty string. appointment_type must be "
+    'exactly "online", "studio_visit", or an empty string. '
     "tattoo_project_type must be new tattoo, cover-up, continuation, touch-up, "
     "or an empty string. Normalize a known date to YYYY-MM-DD and a known time "
     "to 24-hour HH:MM. General availability such as weekdays, weekends, or "
