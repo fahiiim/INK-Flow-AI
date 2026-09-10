@@ -16,70 +16,46 @@ class HighRiskSummaryBuilder:
         inquiry: TattooInquiryInput,
         analysis: AIExtractionOutput,
     ) -> str:
-        """Build one narrative paragraph for a high-risk inquiry."""
+        """Build one concise narrative paragraph for studio staff."""
         if analysis.risk_level != "high":
             raise ValueError("A Telegram summary requires high risk.")
 
         state = inquiry.existing_db_state
         client = self._client_description(state, analysis.client_name)
         idea = self._clean_text(analysis.tattoo_idea)
+        project_type = self._clean_text(analysis.tattoo_project_type)
         if idea:
-            opening = (
-                f'{client} submitted a high-risk tattoo inquiry for "{idea}".'
-            )
+            project = project_type or "tattoo"
+            opening = f'{client} is requesting a {project}: "{idea}".'
+        elif project_type:
+            opening = f"{client} is requesting a {project_type}."
         else:
-            opening = f"{client} submitted a high-risk tattoo inquiry."
+            opening = f"{client} is requesting a tattoo."
 
         sentences = [opening]
         design_description = self._design_description(analysis)
         if design_description:
             sentences.append(design_description)
-        if analysis.tattoo_project_type:
-            sentences.append(
-                f"The client identified this as a {analysis.tattoo_project_type}."
-            )
-        sentences.append(self._reference_description(inquiry))
 
-        appointment = self._appointment_description(analysis)
-        if appointment:
-            sentences.append(appointment)
-        if analysis.appointment_type == "online":
-            sentences.append("The client prefers an online appointment.")
-        elif analysis.appointment_type == "studio_visit":
-            sentences.append("The client prefers to visit the studio.")
-        if analysis.preferred_artist:
-            sentences.append(
-                f"The client's artist preference is {analysis.preferred_artist}."
-            )
-
-        current_message = self._clean_text(inquiry.current_message)
-        if current_message:
-            sentences.append(
-                f'The latest client message says, "{current_message}".'
-            )
+        logistics = self._logistics_description(inquiry, analysis)
+        if logistics:
+            sentences.append(logistics)
 
         if analysis.missing_information:
             sentences.append(
-                "The remaining information needed is "
+                "Still needed: "
                 f"{self._natural_list(analysis.missing_information)}."
             )
         else:
-            sentences.append("No intake information is missing.")
+            sentences.append("All intake details are complete.")
 
         if analysis.suggested_artist != "Unclear":
             sentences.append(
-                f"{analysis.suggested_artist} is the suggested artist with "
-                f"{analysis.confidence_level} confidence."
+                f"Suggested artist: {analysis.suggested_artist} "
+                f"({analysis.confidence_level} confidence)."
             )
         else:
-            sentences.append(
-                "An artist still needs to be assigned manually, and the "
-                f"routing confidence is {analysis.confidence_level}."
-            )
-
-        reasoning = self._clean_text(analysis.ai_reasoning)
-        if reasoning:
-            sentences.append(f"Staff review is required because {reasoning}")
+            sentences.append("Artist assignment is pending.")
 
         return " ".join(
             sentence if sentence.endswith((".", "!", "?")) else sentence + "."
@@ -95,28 +71,9 @@ class HighRiskSummaryBuilder:
         state: dict[str, Any],
         extracted_client_name: str = "",
     ) -> str:
-        """Describe known client identity and contact details naturally."""
+        """Return the client name without duplicating backend metadata."""
         name = self._state_value(state, "lead_name", "name")
-        lead_id = self._state_value(state, "lead_id", "id")
-        phone = self._state_value(
-            state,
-            "lead_phone",
-            "phone_number",
-            "phone",
-        )
-        email = self._state_value(state, "lead_email", "email")
-
-        client = name or extracted_client_name or "The client"
-        details: list[str] = []
-        if lead_id:
-            details.append(f"lead ID {lead_id}")
-        if phone:
-            details.append(f"phone {phone}")
-        if email:
-            details.append(f"email {email}")
-        if details:
-            return f"{client} ({', '.join(details)})"
-        return client
+        return name or extracted_client_name or "The client"
 
     def _design_description(self, analysis: AIExtractionOutput) -> str:
         """Describe known design attributes as one natural sentence."""
@@ -145,30 +102,39 @@ class HighRiskSummaryBuilder:
             )
         if not clauses:
             return ""
-        return f"The requested design {self._natural_list(clauses)}."
+        return f"The design {self._natural_list(clauses)}."
 
-    def _reference_description(self, inquiry: TattooInquiryInput) -> str:
-        """Describe how many new reference images accompany the inquiry."""
+    def _logistics_description(
+        self,
+        inquiry: TattooInquiryInput,
+        analysis: AIExtractionOutput,
+    ) -> str:
+        """Combine references, preferences, and scheduling into one sentence."""
+        clauses: list[str] = []
         count = len(inquiry.new_image_urls)
-        if count == 0:
-            return "No new reference images were provided."
-        noun = "image" if count == 1 else "images"
-        return f"The client provided {count} new reference {noun}."
-
-    def _appointment_description(self, analysis: AIExtractionOutput) -> str:
-        """Describe known preferred scheduling information."""
+        if count:
+            quantity = "one" if count == 1 else str(count)
+            noun = "image" if count == 1 else "images"
+            clauses.append(f"provided {quantity} reference {noun}")
+        if analysis.preferred_artist:
+            clauses.append(f"prefers {analysis.preferred_artist}")
+        if analysis.appointment_type == "online":
+            clauses.append("wants an online appointment")
+        elif analysis.appointment_type == "studio_visit":
+            clauses.append("wants a studio visit")
         if analysis.availability:
-            return f"The client's stated availability is {analysis.availability}."
-        if analysis.date and analysis.time:
-            return (
-                f"The preferred appointment is {analysis.date} at "
-                f"{analysis.time}."
+            clauses.append(f"is available on {analysis.availability}")
+        elif analysis.date and analysis.time:
+            clauses.append(
+                f"prefers {analysis.date} at {analysis.time}"
             )
-        if analysis.date:
-            return f"The preferred appointment date is {analysis.date}."
-        if analysis.time:
-            return f"The preferred appointment time is {analysis.time}."
-        return ""
+        elif analysis.date:
+            clauses.append(f"prefers {analysis.date}")
+        elif analysis.time:
+            clauses.append(f"prefers {analysis.time}")
+        if not clauses:
+            return ""
+        return f"The client {self._natural_list(clauses)}."
 
     def _style(self, analysis: AIExtractionOutput) -> list[str]:
         """Return known style tags for the narrative description."""
