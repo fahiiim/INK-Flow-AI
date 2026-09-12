@@ -19,6 +19,10 @@ class HighRiskSummaryBuilder:
         """Build one concise narrative paragraph for studio staff."""
         if analysis.risk_level != "high":
             raise ValueError("A Telegram summary requires high risk.")
+        if analysis.missing_information:
+            raise ValueError(
+                "A Telegram summary requires a complete inquiry."
+            )
 
         state = inquiry.existing_db_state
         client = self._client_description(state, analysis.client_name)
