@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date as calendar_date
 from types import SimpleNamespace
 from typing import cast
 
@@ -10,6 +11,7 @@ from langchain_openai import ChatOpenAI
 from ai_brain.email_cleaning import strip_quoted_email_content
 from ai_brain.extraction import TattooTextExtractor
 from ai_brain.reply import ConversationReplyComposer
+from ai_brain.routing import TattooRouter
 from ai_brain.schemas import TattooInquiryInput
 
 
@@ -180,3 +182,152 @@ def test_artist_only_followup_preserves_every_other_stored_value() -> None:
     assert result.preferred_artist == "Hoss"
     assert result.appointment_type == "studio_visit"
     assert result.tattoo_project_type == "new tattoo"
+
+
+def test_calligraphy_style_without_wording_keeps_tattoo_idea_missing() -> None:
+    """A technique name is not accepted as the requested tattoo content."""
+    message = (
+        "Hello Tattoo Hysteria, I want to get a tattoo in a calligraphy "
+        "style on my hand. How much will it cost and when can I come to "
+        "your studio?"
+    )
+    extractor = TattooTextExtractor(
+        llm=cast(ChatOpenAI, FailingExtractionLLM()),
+    )
+
+    result = extractor.extract(
+        current_message=message,
+        style_tags=["unknown"],
+        existing_db_state={"lead": {"name": "Fahim Sarker"}},
+    )
+
+    assert result.tattoo_idea == ""
+    assert result.style_tags == ["calligraphy"]
+    assert result.placement == "hand"
+    assert result.appointment_type == "studio_visit"
+    assert "tattoo idea" in result.missing_information
+    assert "tattoo style" not in result.missing_information
+    assert "appointment type" not in result.missing_information
+
+    reply = ConversationReplyComposer().compose_outlook_email(
+        result,
+        existing_db_state={"lead": {"name": "Fahim Sarker"}},
+        current_message=message,
+    )
+    assert "review the design details before confirming the price" in reply
+    assert "- What is your tattoo idea or background story?" in reply
+    assert "online appointment or a studio visit" not in reply
+
+
+def test_real_email_answers_normalize_inches_and_black_and_grey() -> None:
+    """Imperial size and a specific colour phrase resolve deterministically."""
+    first_message = (
+        "I want a tattoo in a calligraphy style on my hand. How much will it "
+        "cost and when can I come to your studio?"
+    )
+    second_message = (
+        "It's roughly about 5 inches. Black and gray color. I'd prefer Silva. "
+        "I'll visit the studio. I'd prefer Thursday on the next week. "
+        "That's going to be a new tattoo."
+    )
+    history = [
+        {"role": "user", "content": first_message},
+        {
+            "role": "assistant",
+            "content": "Please send the remaining details for a price.",
+        },
+    ]
+    inquiry = TattooInquiryInput(
+        current_message=second_message,
+        message_source="outlook",
+        existing_db_state={
+            "lead": {"name": "Fahim Sarker", "source": "outlook"},
+            "intake": {
+                "tattoo_idea": "Calligraphy",
+                "placement": "hand",
+                "appointment_type": "studio_visit",
+            },
+        },
+        recent_chat_history=history,
+    )
+    extractor = TattooTextExtractor(
+        llm=cast(ChatOpenAI, FailingExtractionLLM()),
+    )
+
+    result = extractor.extract(
+        current_message=inquiry.current_message,
+        style_tags=["calligraphy"],
+        existing_db_state=inquiry.existing_db_state,
+        recent_chat_history=inquiry.recent_chat_history,
+    )
+
+    next_thursday_offset = (3 - calendar_date.today().weekday()) % 7 or 7
+    expected_date = calendar_date.fromordinal(
+        calendar_date.today().toordinal() + next_thursday_offset
+    ).isoformat()
+    assert result.size_estimate_cm == "12.7 cm"
+    assert result.color_preference == "black-and-grey"
+    assert result.date == expected_date
+    assert result.availability == expected_date
+    assert result.preferred_artist == "Silva"
+    assert result.appointment_type == "studio_visit"
+    assert result.tattoo_project_type == "new tattoo"
+    assert result.tattoo_idea == ""
+    assert result.missing_information == [
+        "tattoo idea",
+        "reference images",
+    ]
+
+    reply = ConversationReplyComposer().compose_outlook_email(
+        result,
+        existing_db_state=inquiry.existing_db_state,
+        current_message=inquiry.current_message,
+        recent_chat_history=inquiry.recent_chat_history,
+    )
+    assert "Thank you for the additional details" in reply
+    assert "We still need the following information" in reply
+    assert "review the design details before confirming the price" in reply
+    assert "- Approximate size: 12.7 cm" in reply
+    assert "- Color preference: black-and-grey" in reply
+    assert "What size would you prefer" not in reply
+
+    routed = TattooRouter(
+        llm=cast(ChatOpenAI, FailingExtractionLLM()),
+    ).route(
+        extracted=result,
+        current_message=inquiry.current_message,
+        recent_chat_history=inquiry.recent_chat_history,
+        existing_db_state=inquiry.existing_db_state,
+        message_source="outlook",
+    )
+    assert routed.risk_level == "low"
+    assert routed.telegram_review_required is False
+
+
+def test_latest_centimetre_answer_overrides_earlier_inches() -> None:
+    """A later 5 cm correction replaces the converted 5-inch value."""
+    extractor = TattooTextExtractor(
+        llm=cast(ChatOpenAI, FailingExtractionLLM()),
+    )
+
+    result = extractor.extract(
+        current_message="It's going to be about 5 cm.",
+        style_tags=["calligraphy"],
+        existing_db_state={
+            "lead": {"name": "Fahim Sarker"},
+            "intake": {
+                "tattoo_idea": "Name and date in calligraphy",
+                "placement": "hand",
+                "size_estimate_cm": "12.7 cm",
+                "color_preference": "black-and-grey",
+                "preferred_artist": "Silva",
+                "appointment_type": "studio_visit",
+                "availability": "2026-09-17",
+                "tattoo_project_type": "new tattoo",
+            },
+        },
+        new_image_urls=["https://example.com/reference.jpg"],
+    )
+
+    assert result.size_estimate_cm == "5 cm"
+    assert result.tattoo_idea == "Name and date in calligraphy"
