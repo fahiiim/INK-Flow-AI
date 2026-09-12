@@ -54,7 +54,7 @@ def _analysis(risk_level: str) -> AIExtractionOutput:
             "suggested_artist": "Hoss",
             "confidence_level": "high",
             "ai_reasoning": "Large traditional work and pricing need review.",
-            "missing_information": ["reference images"],
+            "missing_information": [],
             "risk_level": risk_level,
             "draft_reply": (
                 "Got it. I'll have the studio team review this and get back "
@@ -112,7 +112,7 @@ def test_high_risk_endpoint_returns_summary_then_draft_reply() -> None:
     assert "is intended for the back" in body["summary"]
     assert "wants an online appointment" in body["summary"]
     assert "prefers 2026-09-04 at 14:30" in body["summary"]
-    assert "Still needed: reference images" in body["summary"]
+    assert "All intake details are complete" in body["summary"]
     assert "Suggested artist: Hoss (high confidence)" in body["summary"]
     assert "High-risk request" not in body["summary"]
     assert "Client:" not in body["summary"]
@@ -178,6 +178,28 @@ def test_low_risk_endpoint_returns_conflict_without_summary() -> None:
         "detail": "Telegram summary is available only for high-risk inquiries."
     }
     assert len(brain.calls) == 1
+
+
+def test_incomplete_high_risk_result_cannot_create_telegram_summary() -> None:
+    """A stale high-risk label cannot bypass the completeness gate."""
+    inconsistent = _analysis("high").model_copy(
+        update={"missing_information": ["reference images"]}
+    )
+    brain = StubAIBrain(inconsistent)
+
+    with _client(brain) as client:
+        response = client.post(
+            "/api/v1/inquiries/telegram-summary",
+            json=_payload(),
+        )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": (
+            "Telegram summary requires a complete inquiry with no missing "
+            "information."
+        )
+    }
 
 
 def test_complete_summary_is_short_and_staff_friendly() -> None:
