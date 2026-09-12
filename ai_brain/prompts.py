@@ -38,6 +38,8 @@ EXTRACTION_SYSTEM_PROMPT = (
     "describing a subject, design, concept, wording, or story. "
     "tattoo_idea must be a concise design concept, never the full client "
     "message, email headers, quoted correspondence, or logistical answers. "
+    "A style name alone, including calligraphy, is not a tattoo idea; for "
+    "calligraphy, the intended wording, symbol, or story is still required. "
     "A flower or floral subject does not by itself answer the preferred tattoo "
     "style question; require an explicit technique/style or clear visual "
     "style evidence. "
@@ -50,8 +52,11 @@ EXTRACTION_SYSTEM_PROMPT = (
     "Silva, No preference, or an empty string. appointment_type must be "
     'exactly "online", "studio_visit", or an empty string. '
     "tattoo_project_type must be new tattoo, cover-up, continuation, touch-up, "
-    "or an empty string. Normalize a known date to YYYY-MM-DD and a known time "
-    "to 24-hour HH:MM. General availability such as weekdays, weekends, or "
+    "or an empty string. Convert sizes supplied in inches to centimetres using "
+    "1 inch = 2.54 cm. Treat an explicit black-and-grey phrase as "
+    "black-and-grey even when the client adds the word color. Normalize a "
+    "known date to YYYY-MM-DD and a known time to 24-hour HH:MM. General "
+    "availability such as weekdays, weekends, or "
     "evenings belongs in availability. Use empty strings for unknown values. "
     "Return strictly valid JSON and do not include markdown or extra text."
 )
