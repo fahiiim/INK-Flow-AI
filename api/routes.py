@@ -179,6 +179,14 @@ def create_telegram_summary(
             status_code=status.HTTP_409_CONFLICT,
             detail="Telegram summary is available only for high-risk inquiries.",
         )
+    if analysis.missing_information:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Telegram summary requires a complete inquiry with no "
+                "missing information."
+            ),
+        )
 
     summary = SUMMARY_BUILDER.build(payload, analysis)
     telegram_message = SUMMARY_BUILDER.combine_with_draft(
