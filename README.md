@@ -65,7 +65,12 @@ The structured `appointment_type` response field is either `online`,
 replies display these choices naturally as “online” and “studio visit”.
 
 Use `/api/v1/inquiries/telegram-summary` for high-risk inquiries. It returns a
-staff summary together with the generated draft reply.
+staff summary together with the generated draft reply. A summary is returned
+only when the latest analysis is high risk and has no missing intake items.
+Telegram consumers should send the returned `telegram_message` for the same
+inquiry and must not merge prices, schedules, service codes, or draft replies
+from older intake records. Request and active-intake association remains the
+calling backend's responsibility.
 
 ## Run the tests
 
