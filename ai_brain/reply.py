@@ -43,8 +43,11 @@ _SCHEDULE_TERMS = (
     " am",
     " pm",
 )
+_PRICING_PATTERN = re.compile(
+    r"\b(?:price|pricing|cost|quote|how much|budget)\b"
+)
 _MANUAL_REVIEW_PATTERNS = (
-    re.compile(r"\b(?:price|pricing|cost|quote|how much|budget)\b"),
+    _PRICING_PATTERN,
     re.compile(r"\b(?:book|booking|booked|deposit)\b"),
     re.compile(
         r"\b(?:cancel|cancellation|reschedule|rescheduling|refund)\b"
@@ -132,6 +135,20 @@ def requires_manual_review(
     return any(pattern.search(combined) for pattern in _MANUAL_REVIEW_PATTERNS)
 
 
+def pricing_was_requested(
+    current_message: str,
+    recent_chat_history: Sequence[Message] | None = None,
+) -> bool:
+    """Return whether the client asked for price in this conversation."""
+    user_messages = [
+        message.content
+        for message in (recent_chat_history or [])
+        if message.role == "user"
+    ]
+    combined = " ".join([*user_messages, current_message]).casefold()
+    return bool(_PRICING_PATTERN.search(combined))
+
+
 class ConversationReplyComposer:
     """Create concise replies that feel like an ongoing human conversation."""
 
@@ -144,6 +161,7 @@ class ConversationReplyComposer:
     ) -> str:
         """Acknowledge the latest turn and ask only the next useful question."""
         history = recent_chat_history or []
+        pricing_requested = pricing_was_requested(current_message, history)
         manual_review = risk_level == "high" and requires_manual_review(
             current_message,
             history,
@@ -156,9 +174,12 @@ class ConversationReplyComposer:
             history=history,
         )
         if manual_review:
+            review_subject = (
+                "the details and pricing" if pricing_requested else "this"
+            )
             reply = (
-                f"{acknowledgement} I'll have the studio team review this "
-                "and get back to you."
+                f"{acknowledgement} I'll have the studio team review "
+                f"{review_subject} and get back to you."
             )
             return self._avoid_exact_repeat(reply, history)
 
@@ -167,7 +188,13 @@ class ConversationReplyComposer:
             history=history,
         )
         if questions:
-            reply = " ".join([acknowledgement, *questions])
+            reply_parts = [acknowledgement]
+            if pricing_requested:
+                reply_parts.append(
+                    "The studio can confirm the price after reviewing the "
+                    "remaining tattoo details."
+                )
+            reply = " ".join([*reply_parts, *questions])
             return self._avoid_exact_repeat(reply, history)
 
         if risk_level == "high":
@@ -192,6 +219,7 @@ class ConversationReplyComposer:
     ) -> str:
         """Summarize extracted facts once, unless already confirmed."""
         history = recent_chat_history or []
+        pricing_requested = pricing_was_requested(current_message, history)
         if risk_level == "high":
             return self.compose(
                 extracted=extracted,
@@ -230,8 +258,13 @@ class ConversationReplyComposer:
         reply_parts = [
             summary,
             "Does that sound right, or would you like to change anything?",
-            *questions,
         ]
+        if pricing_requested:
+            reply_parts.append(
+                "The studio can confirm the price after reviewing the "
+                "remaining tattoo details."
+            )
+        reply_parts.extend(questions)
         return self._avoid_exact_repeat(
             " ".join(reply_parts),
             history,
@@ -241,8 +274,16 @@ class ConversationReplyComposer:
         self,
         extracted: TattooExtractionDraft,
         existing_db_state: Mapping[str, object] | None = None,
+        current_message: str = "",
+        recent_chat_history: Sequence[Message] | None = None,
     ) -> str:
         """Create one professional email containing every missing request."""
+        history = recent_chat_history or []
+        is_follow_up = self._is_outlook_follow_up(
+            history,
+            existing_db_state,
+        )
+        pricing_requested = pricing_was_requested(current_message, history)
         missing_information = list(extracted.missing_information)
         sections = [
             self._outlook_salutation(
@@ -250,10 +291,19 @@ class ConversationReplyComposer:
                 extracted.client_name,
             ),
             (
-                "Thank you for contacting Tattoo Hysteria. We have received "
-                "your tattoo inquiry."
+                "Thank you for the additional details. We have updated your "
+                "tattoo inquiry."
+                if is_follow_up
+                else "Thank you for contacting Tattoo Hysteria. We have "
+                "received your tattoo inquiry."
             ),
         ]
+
+        if pricing_requested and missing_information:
+            sections.append(
+                "The studio team will review the design details before "
+                "confirming the price."
+            )
 
         known_details = self._outlook_known_details(extracted)
         if known_details:
@@ -269,13 +319,16 @@ class ConversationReplyComposer:
                 f"- {_MISSING_EMAIL_REQUESTS[item]}"
                 for item in missing_information
             )
+            request_intro = (
+                "We still need the following information to complete your "
+                "request:\n"
+                if is_follow_up
+                else "To help us review your request, please reply to this "
+                "email with all of the following information:\n"
+            )
             sections.extend(
                 [
-                    (
-                        "To help us review your request, please reply to this "
-                        "email with all of the following information:\n"
-                        f"{requested_details}"
-                    ),
+                    f"{request_intro}{requested_details}",
                     (
                         "Once we receive these details, our studio team will "
                         "review your inquiry and contact you with the next "
@@ -285,12 +338,36 @@ class ConversationReplyComposer:
             )
         else:
             sections.append(
-                "Our studio team will review your inquiry and contact you "
-                "with the next steps."
+                "Our studio team will review your completed inquiry and "
+                + (
+                    "contact you with pricing and the next steps."
+                    if pricing_requested
+                    else "contact you with the next steps."
+                )
             )
 
         sections.append("Kind regards,\nTattoo Hysteria")
         return "\n\n".join(sections)
+
+    def _is_outlook_follow_up(
+        self,
+        history: Sequence[Message],
+        existing_db_state: Mapping[str, object] | None,
+    ) -> bool:
+        """Detect an established email thread without relying on body quotes."""
+        if any(message.role == "assistant" for message in history):
+            return True
+
+        state = existing_db_state or {}
+        records: list[Mapping[str, object]] = [state]
+        intake = state.get("intake")
+        if isinstance(intake, Mapping):
+            records.append(intake)
+        return any(
+            isinstance(record.get("latest_draft_reply"), str)
+            and bool(str(record["latest_draft_reply"]).strip())
+            for record in records
+        )
 
     def _outlook_salutation(
         self,
