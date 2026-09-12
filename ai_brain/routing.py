@@ -185,6 +185,8 @@ class TattooRouter:
             return self._reply_composer.compose_outlook_email(
                 extracted=extracted,
                 existing_db_state=existing_db_state,
+                current_message=current_message,
+                recent_chat_history=recent_chat_history,
             )
         if extracted.missing_information:
             return self._reply_composer.compose_validation(
