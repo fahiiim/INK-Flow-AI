@@ -7,6 +7,7 @@ import re
 from collections.abc import Callable
 from datetime import date as calendar_date
 from datetime import timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Any, cast
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -104,6 +105,19 @@ _CONCEPTLESS_INQUIRY_WORDS = {
     "would",
     "you",
 }
+_STYLE_ONLY_IDEA_VALUES = {
+    "black-and-grey",
+    "calligraphy",
+    "fine-line",
+    "floral",
+    "geometric",
+    "lettering",
+    "micro-realism",
+    "minimal",
+    "script",
+    "traditional",
+    "watercolor",
+}
 _STYLE_TEXT_ALIASES: dict[StyleTag, tuple[str, ...]] = {
     "fine-line": ("fine-line", "fine line", "fineline"),
     "watercolor": ("watercolor", "watercolour"),
@@ -146,6 +160,7 @@ _SIZE_FIELD_TERMS = (
     "centimeter",
     "centimetre",
     " cm",
+    "inch",
     "bigger",
     "smaller",
 )
@@ -217,6 +232,10 @@ _APPOINTMENT_TYPE_FIELD_TERMS = (
     "studio visit",
     "studio_visit",
     "visit the studio",
+    "come to the studio",
+    "come to your studio",
+    "came to the studio",
+    "came to your studio",
 )
 _AVAILABILITY_FIELD_TERMS = (
     "availability",
@@ -246,7 +265,6 @@ _TATTOO_SUBJECT_WORDS = (
     "animal",
     "bird",
     "butterfly",
-    "calligraphy",
     "dragon",
     "eagle",
     "flower",
@@ -979,7 +997,7 @@ class TattooTextExtractor:
             existing_db_state,
             ("tattoo_idea", "idea", "concept"),
         )
-        if stored_idea:
+        if stored_idea and not self._is_missing_tattoo_idea(stored_idea):
             return stored_idea
 
         historical_idea = self._latest_history_value(
@@ -1111,6 +1129,9 @@ class TattooTextExtractor:
             "general tattoo inquiry",
             "tattoo help",
         }:
+            return True
+        style_only = normalized.removesuffix(" tattoo").strip()
+        if style_only in _STYLE_ONLY_IDEA_VALUES:
             return True
         words = set(re.findall(r"[a-z]+", normalized))
         if words and words.issubset(_CONCEPTLESS_INQUIRY_WORDS):
@@ -1264,7 +1285,8 @@ class TattooTextExtractor:
             (r"\bonline(?:\s+(?:appointment|consultation))?\b", "online"),
             (
                 r"\b(?:studio[_ -]?visit|visit(?:ing)?\s+(?:the\s+)?studio|"
-                r"come\s+to\s+(?:the\s+)?studio|in[- ]person)\b",
+                r"(?:come|came|coming)\s+to\s+(?:(?:the|your)\s+)?studio|"
+                r"in[- ]person)\b",
                 "studio_visit",
             ),
         )
@@ -1330,10 +1352,32 @@ class TattooTextExtractor:
         return " ".join(latest.group(0).split())
 
     def _extract_size_from_text(self, text: str) -> str:
-        """Extract an explicit centimeter size for safe fallback overrides."""
-        pattern = r"\b\d+(?:\.\d+)?\s*(?:cm|centimeters?|centimetres?)\b"
-        matches = list(re.finditer(pattern, text, flags=re.IGNORECASE))
-        return matches[-1].group(0).strip() if matches else ""
+        """Extract a size and normalize imperial measurements to centimetres."""
+        candidates: list[tuple[int, str]] = []
+        cm_pattern = r"\b\d+(?:\.\d+)?\s*(?:cm|centimeters?|centimetres?)\b"
+        for match in re.finditer(cm_pattern, text, flags=re.IGNORECASE):
+            candidates.append((match.start(), match.group(0).strip()))
+
+        inch_pattern = re.compile(
+            r"\b(?P<value>\d+(?:\.\d+)?)\s*(?:inches?|inch|in)\b|"
+            r"(?P<quoted>\d+(?:\.\d+)?)\s*\"",
+            flags=re.IGNORECASE,
+        )
+        for match in inch_pattern.finditer(text):
+            raw_value = match.group("value") or match.group("quoted")
+            try:
+                centimeters = Decimal(raw_value) * Decimal("2.54")
+            except InvalidOperation:
+                continue
+            normalized = format(
+                centimeters.quantize(Decimal("0.01")).normalize(),
+                "f",
+            )
+            candidates.append((match.start(), f"{normalized} cm"))
+
+        if not candidates:
+            return ""
+        return max(candidates, key=lambda item: item[0])[1]
 
     def _extract_placement_from_text(self, text: str) -> str:
         """Extract the latest positively stated common body placement."""
@@ -1351,30 +1395,31 @@ class TattooTextExtractor:
     def _extract_color_from_text(self, text: str) -> str:
         """Normalize an explicit latest-message color preference."""
         normalized = text.casefold()
-        no_color_pattern = r"\b(?:no|without)\s+colou?r\b"
-        if re.search(no_color_pattern, normalized):
-            return "black-and-grey"
-
-        patterns = (
+        specific_patterns = (
             (
-                r"\b(?:black[- ]and[- ]gr[ae]y|black\s*&\s*gr[ae]y|"
+                r"\b(?:(?:no|without)\s+colou?r|"
+                r"black[- ]and[- ]gr[ae]y|black\s*&\s*gr[ae]y|"
                 r"black\s+ink(?:\s+only)?|black\s+only)\b",
                 "black-and-grey",
             ),
             (
-                r"\b(?:full\s+colou?r|colou?r(?:ed|ful)?|"
+                r"\b(?:full\s+colou?r|colou?r(?:ed|ful)|"
                 r"red|blue|green|yellow|purple|orange|pink)\b",
                 "color",
             ),
         )
-        matches: list[tuple[int, str]] = []
-        for pattern, value in patterns:
+        specific_matches: list[tuple[int, str]] = []
+        for pattern, value in specific_patterns:
             for match in re.finditer(pattern, normalized):
                 if not self._phrase_is_negated(normalized, match.start()):
-                    matches.append((match.start(), value))
-        if not matches:
-            return ""
-        return max(matches, key=lambda item: item[0])[1]
+                    specific_matches.append((match.start(), value))
+        if specific_matches:
+            return max(specific_matches, key=lambda item: item[0])[1]
+
+        generic_matches = list(re.finditer(r"\bcolou?r\b", normalized))
+        if generic_matches:
+            return "color"
+        return ""
 
     def _extract_date_from_text(self, text: str) -> str:
         """Extract and normalize the latest explicit preferred date."""
