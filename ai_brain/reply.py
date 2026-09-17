@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from .schemas import (
     ARTIST_PREFERENCE_OPTIONS,
     MISSING_INFORMATION_OPTIONS,
+    STYLE_TAG_OPTIONS,
     Message,
     RiskLevel,
     TattooExtractionDraft,
@@ -66,13 +67,21 @@ _APPOINTMENT_TYPE_QUESTION = (
     "Would you prefer an online appointment or a studio visit? "
     "Please reply with online or studio visit."
 )
+_CLIENT_STYLE_OPTIONS = tuple(
+    style for style in STYLE_TAG_OPTIONS if style != "unknown"
+)
+_STYLE_QUESTION = (
+    "What tattoo style would you prefer? Please choose one or more from: "
+    + ", ".join(_CLIENT_STYLE_OPTIONS)
+    + "."
+)
 _MISSING_QUESTIONS = {
     "client full name": "What is your full name?",
     "tattoo idea": "What is your tattoo idea or background story?",
     "size in cm": "What size would you prefer in centimetres?",
     "placement": "Where on your body would you like the tattoo?",
     "color preference": "Would you like colour or black and grey?",
-    "tattoo style": "What tattoo style would you prefer?",
+    "tattoo style": _STYLE_QUESTION,
     "reference images": (
         "Could you share any reference or inspiration images?"
     ),
@@ -285,14 +294,22 @@ class ConversationReplyComposer:
         )
         pricing_requested = pricing_was_requested(current_message, history)
         missing_information = list(extracted.missing_information)
+        correction = any(
+            term in current_message.casefold() for term in _CORRECTION_TERMS
+        )
         sections = [
             self._outlook_salutation(
                 existing_db_state,
                 extracted.client_name,
             ),
             (
-                "Thank you for the additional details. We have updated your "
-                "tattoo inquiry."
+                (
+                    "Thank you for clarifying. We have corrected your tattoo "
+                    "inquiry."
+                    if correction
+                    else "Thank you for the additional details. We have "
+                    "updated your tattoo inquiry."
+                )
                 if is_follow_up
                 else "Thank you for contacting Tattoo Hysteria. We have "
                 "received your tattoo inquiry."
