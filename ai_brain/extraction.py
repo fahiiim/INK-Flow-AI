@@ -124,7 +124,7 @@ _STYLE_TEXT_ALIASES: dict[StyleTag, tuple[str, ...]] = {
     "minimal": ("minimal", "minimalist"),
     "floral": ("floral",),
     "micro-realism": ("micro-realism", "micro realism"),
-    "calligraphy": ("calligraphy", "lettering"),
+    "calligraphy": ("calligraphy", "calligraphic", "lettering"),
     "traditional": ("traditional",),
     "geometric": ("geometric", "geometry"),
 }
@@ -1166,6 +1166,10 @@ class TattooTextExtractor:
         if not normalized or normalized == _IMAGE_ONLY_MESSAGE:
             return ""
 
+        quoted_wording = self._extract_quoted_wording_idea(normalized)
+        if quoted_wording:
+            return quoted_wording
+
         candidates: list[tuple[int, str]] = []
         idea_patterns = (
             re.compile(
@@ -1222,6 +1226,44 @@ class TattooTextExtractor:
         if not usable:
             return ""
         return max(usable, key=lambda item: item[0])[1]
+
+    def _extract_quoted_wording_idea(self, text: str) -> str:
+        """Preserve explicitly quoted tattoo wording as one complete concept."""
+        matches = list(
+            re.finditer(
+                r'["\u201c](?P<wording>[^"\u201d\n]{2,200})["\u201d]',
+                text,
+            )
+        )
+        for match in reversed(matches):
+            prefix = text[max(0, match.start() - 180) : match.start()]
+            suffix = text[match.end() : match.end() + 100]
+            context = f"{prefix} {suffix}".casefold()
+            describes_wording = re.search(
+                r"\b(?:tattoo\s+(?:idea|concept|design)|wording|words?|text|"
+                r"phrase|quote|written|write|saying|say)\b",
+                context,
+            )
+            tattoo_request = (
+                "tattoo" in prefix.casefold()
+                and re.search(
+                    r"\b(?:want|would like|need|planning|get|getting)\b",
+                    prefix.casefold(),
+                )
+            )
+            if not describes_wording and not tattoo_request:
+                continue
+
+            wording = " ".join(match.group("wording").split()).strip()
+            if not wording:
+                continue
+            descriptor = (
+                "Calligraphy wording"
+                if "calligraph" in context
+                else "Wording"
+            )
+            return f'{descriptor}: "{wording}"'
+        return ""
 
     def _clean_tattoo_idea_candidate(self, value: str) -> str:
         """Normalize a short extracted concept and reject generic wording."""
@@ -1354,9 +1396,19 @@ class TattooTextExtractor:
     def _extract_size_from_text(self, text: str) -> str:
         """Extract a size and normalize imperial measurements to centimetres."""
         candidates: list[tuple[int, str]] = []
-        cm_pattern = r"\b\d+(?:\.\d+)?\s*(?:cm|centimeters?|centimetres?)\b"
+        cm_pattern = (
+            r"\b(?P<value>\d+(?:\.\d+)?)\s*"
+            r"(?:cm|centimeters?|centimetres?)\b"
+        )
         for match in re.finditer(cm_pattern, text, flags=re.IGNORECASE):
-            candidates.append((match.start(), match.group(0).strip()))
+            try:
+                normalized = format(
+                    Decimal(match.group("value")).normalize(),
+                    "f",
+                )
+            except InvalidOperation:
+                continue
+            candidates.append((match.start(), f"{normalized} cm"))
 
         inch_pattern = re.compile(
             r"\b(?P<value>\d+(?:\.\d+)?)\s*(?:inches?|inch|in)\b|"
