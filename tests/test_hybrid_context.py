@@ -80,7 +80,7 @@ def test_current_message_overrides_database_and_state_fills_blanks() -> None:
         recent_chat_history=history,
     )
 
-    assert result.size_estimate_cm == "10cm"
+    assert result.size_estimate_cm == "10 cm"
     assert result.placement == "inner wrist"
     assert result.color_preference == "black-and-grey"
     assert result.date == "2026-08-15"
@@ -137,7 +137,7 @@ def test_current_message_deterministically_overrides_stale_model_values() -> Non
         recent_chat_history=history,
     )
 
-    assert result.size_estimate_cm == "12cm"
+    assert result.size_estimate_cm == "12 cm"
     assert result.placement == "forearm"
     assert result.color_preference == "color"
     assert result.style_tags == ["traditional"]
@@ -163,7 +163,7 @@ def test_provider_failure_uses_current_then_history_then_database() -> None:
         recent_chat_history=history,
     )
 
-    assert result.size_estimate_cm == "10cm"
+    assert result.size_estimate_cm == "10 cm"
     assert result.placement == "shoulder"
     assert result.color_preference == "color"
 
