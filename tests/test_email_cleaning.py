@@ -138,6 +138,7 @@ def test_realistic_second_email_extracts_only_client_answers() -> None:
     assert "- Appointment type: Studio visit" in reply
     assert "- Availability:" not in reply
     assert "- What tattoo style would you prefer?" in reply
+    assert "fine-line, watercolor, minimal, floral" in reply
     assert "On Wed" not in reply
 
 
@@ -331,3 +332,131 @@ def test_latest_centimetre_answer_overrides_earlier_inches() -> None:
 
     assert result.size_estimate_cm == "5 cm"
     assert result.tattoo_idea == "Name and date in calligraphy"
+
+
+def test_calligraphic_wording_conversation_preserves_the_complete_quote() -> None:
+    """Quoted wording wins over subject words appearing inside the sentence."""
+    first_message = (
+        "Hello Tattoo Hysteria, I want to get a tattoo on my leg. How much "
+        "will it cost? The tattoo will be in English wording, but in a "
+        "calligraphic style."
+    )
+    extractor = TattooTextExtractor(
+        llm=cast(ChatOpenAI, FailingExtractionLLM()),
+    )
+    first = extractor.extract(
+        current_message=first_message,
+        style_tags=["unknown"],
+        existing_db_state={"lead": {"name": "Fahim Sarker"}},
+    )
+
+    assert first.tattoo_idea == ""
+    assert first.style_tags == ["calligraphy"]
+    assert first.placement == "leg"
+    assert "tattoo idea" in first.missing_information
+    assert "tattoo style" not in first.missing_information
+
+    first_reply = ConversationReplyComposer().compose_outlook_email(
+        first,
+        existing_db_state={"lead": {"name": "Fahim Sarker"}},
+        current_message=first_message,
+    )
+    assert "- Style: calligraphy" in first_reply
+    assert "What tattoo style would you prefer?" not in first_reply
+
+    second_message = (
+        'Tattoo idea is on the leg: "You Cannot reason with a tiger when your '
+        'head is in his mouth!!" will be written in a calligraphic style. '
+        "Size will be approximately 12 centimeters. Black and gray color. "
+        "I'd prefer Hoss. I'd visit the studio; my preferred date is next "
+        "Wednesday. And that's going to be a new tattoo."
+    )
+    history = [
+        {"role": "user", "content": first_message},
+        {"role": "assistant", "content": first_reply},
+    ]
+    inquiry = TattooInquiryInput(
+        current_message=second_message,
+        message_source="outlook",
+        existing_db_state={
+            "lead": {"name": "Fahim Sarker", "source": "outlook"},
+            "intake": {
+                "placement": first.placement,
+                "style_tags": first.style_tags,
+            },
+        },
+        recent_chat_history=history,
+    )
+    second = extractor.extract(
+        current_message=inquiry.current_message,
+        style_tags=["unknown"],
+        existing_db_state=inquiry.existing_db_state,
+        recent_chat_history=inquiry.recent_chat_history,
+    )
+
+    assert second.tattoo_idea == (
+        'Calligraphy wording: "You Cannot reason with a tiger when your head '
+        'is in his mouth!!"'
+    )
+    assert second.style_tags == ["calligraphy"]
+    assert second.placement == "leg"
+    assert second.size_estimate_cm == "12 cm"
+    assert second.color_preference == "black-and-grey"
+    next_wednesday_offset = (
+        2 - calendar_date.today().weekday()
+    ) % 7 or 7
+    expected_wednesday = calendar_date.fromordinal(
+        calendar_date.today().toordinal() + next_wednesday_offset
+    ).isoformat()
+    assert second.date == expected_wednesday
+    assert second.preferred_artist == "Hoss"
+    assert second.appointment_type == "studio_visit"
+    assert second.tattoo_project_type == "new tattoo"
+    assert second.missing_information == ["reference images"]
+
+    third_message = "I said multiple times that I need it in calligraphy style."
+    complete_history = [
+        *history,
+        {"role": "user", "content": second_message},
+        {
+            "role": "assistant",
+            "content": "Please share a reference or inspiration image.",
+        },
+    ]
+    final_inquiry = TattooInquiryInput(
+        current_message=third_message,
+        message_source="outlook",
+        new_image_urls=["https://example.com/reference.png"],
+        existing_db_state={
+            "lead": {"name": "Fahim Sarker", "source": "outlook"},
+            "intake": second.model_dump(),
+        },
+        recent_chat_history=complete_history,
+    )
+    final = extractor.extract(
+        current_message=final_inquiry.current_message,
+        style_tags=["unknown"],
+        new_image_urls=final_inquiry.new_image_urls,
+        existing_db_state=final_inquiry.existing_db_state,
+        recent_chat_history=final_inquiry.recent_chat_history,
+    )
+
+    assert final.tattoo_idea == second.tattoo_idea
+    assert final.style_tags == ["calligraphy"]
+    assert final.missing_information == []
+
+    routed = TattooRouter(
+        llm=cast(ChatOpenAI, FailingExtractionLLM()),
+    ).route(
+        extracted=final,
+        current_message=final_inquiry.current_message,
+        recent_chat_history=final_inquiry.recent_chat_history,
+        existing_db_state=final_inquiry.existing_db_state,
+        message_source="outlook",
+    )
+    assert routed.risk_level == "high"
+    assert routed.auto_reply_allowed is False
+    assert routed.draft_reply.startswith("Dear Fahim,")
+    assert "Thank you for clarifying" in routed.draft_reply
+    assert "- Style: calligraphy" in routed.draft_reply
+    assert "contact you with pricing and the next steps" in routed.draft_reply
