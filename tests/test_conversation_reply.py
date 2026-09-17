@@ -211,6 +211,31 @@ def test_whatsapp_appointment_type_question_lists_two_options() -> None:
     assert "CH -" not in reply
 
 
+def test_whatsapp_style_question_lists_every_supported_style() -> None:
+    """WhatsApp presents the complete controlled style vocabulary."""
+    extracted = TattooExtractionDraft(
+        tattoo_idea="A flower and moon design",
+        style_tags=["unknown"],
+        placement="forearm",
+        size_estimate_cm="8 cm",
+        color_preference="black-and-grey",
+        missing_information=["tattoo style"],
+    )
+
+    reply = ConversationReplyComposer().compose(
+        extracted=extracted,
+        current_message="The other details are correct.",
+        recent_chat_history=[],
+        risk_level="low",
+    )
+
+    assert reply.endswith(
+        "What tattoo style would you prefer? Please choose one or more from: "
+        "fine-line, watercolor, minimal, floral, micro-realism, "
+        "black-and-grey, calligraphy, traditional, geometric."
+    )
+
+
 def test_outlook_email_requests_every_missing_item_at_once() -> None:
     """Outlook receives one professional email with the full missing list."""
     extracted = TattooExtractionDraft(
@@ -253,6 +278,10 @@ def test_outlook_email_requests_every_missing_item_at_once() -> None:
     assert "- Where on your body would you like the tattoo?" in reply
     assert "- Would you like colour or black and grey?" in reply
     assert "- What tattoo style would you prefer?" in reply
+    assert (
+        "fine-line, watercolor, minimal, floral, micro-realism, "
+        "black-and-grey, calligraphy, traditional, geometric" in reply
+    )
     assert "- Could you share any reference or inspiration images?" in reply
     assert "Please choose Hoss, Nina, Lana, Sandra, Silva" in reply
     assert "- Would you prefer an online appointment or a studio visit?" in reply
