@@ -53,24 +53,37 @@ Send a `POST` request to `/api/v1/inquiries/analyze` with a payload like this:
 ```
 
 Set `message_source` to `outlook` to receive a professional email draft that
-requests all missing intake details in one message. When omitted, it defaults
-to the `source` stored in `existing_db_state.intake` or
+uses natural prose and asks only the next one or two useful questions. When
+omitted, it defaults to the `source` stored in `existing_db_state.intake` or
 `existing_db_state.lead`, then falls back to `whatsapp`. WhatsApp keeps the
-concise conversational reply format. Outlook and Gmail quoted reply threads
-are removed before extraction so previous studio questions cannot be mistaken
-for new client answers.
+concise conversational reply format. Outlook and Gmail quoted reply threads,
+including common signatures, are removed before extraction so previous studio
+questions and sign-offs cannot be mistaken for new client answers.
+
+Group inquiries are represented by `party_size` and `projects`. Each project
+can keep its own recipient, idea, style, placement, size, colour, project type,
+and reference images. Qualitative answers such as `hand-sized` are stored in
+`size_description`; an explicit `not sure` is accepted and flagged for staff
+help instead of being asked repeatedly. `artist_preference_mode` distinguishes
+a named artist from requests such as "please recommend the best fit".
 
 The structured `appointment_type` response field is either `online`,
 `studio_visit`, or an empty string while it is still unknown. Client-facing
 replies display these choices naturally as “online” and “studio visit”.
 
-Use `/api/v1/inquiries/telegram-summary` for high-risk inquiries. It returns a
-staff summary together with the generated draft reply. A summary is returned
-only when the latest analysis is high risk and has no missing intake items.
-Telegram consumers should send the returned `telegram_message` for the same
-inquiry and must not merge prices, schedules, service codes, or draft replies
-from older intake records. Request and active-intake association remains the
-calling backend's responsibility.
+`risk_level` remains `low` while required intake information is missing and
+becomes `high` only when the required intake is complete. Separately,
+`staff_review_required`, `review_reasons`, and `intake_status` allow complex
+but incomplete cases—such as group requests or an unknown size—to reach staff
+without falsely marking them complete.
+
+Use `/api/v1/inquiries/telegram-summary` whenever
+`telegram_review_required` is true. It returns a concise staff summary, the
+generated draft reply, review reasons, and `reference_image_urls`. The calling
+backend must send those image URLs as Telegram media; this service only
+returns them. Telegram consumers must not merge prices, schedules, service
+codes, or draft replies from older intake records. Request and active-intake
+association remains the calling backend's responsibility.
 
 ## Run the tests
 
