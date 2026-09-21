@@ -43,7 +43,6 @@ artists:
   - artist_key: sandra
     display_name: Sandra
     specialties:
-      - watercolor
       - floral
       - minimal
     min_size_cm: 2.0
