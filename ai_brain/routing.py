@@ -125,6 +125,14 @@ class TattooRouter:
         db_state = existing_db_state or {}
         artist_decision = self._suggest_artist(extracted)
         risk_level = self._classify_risk(extracted)
+        review_reasons = self._review_reasons(extracted, artist_decision)
+        staff_review_required = risk_level == "high" or bool(review_reasons)
+        if extracted.missing_information and staff_review_required:
+            intake_status = "needs_staff_review"
+        elif extracted.missing_information:
+            intake_status = "collecting_info"
+        else:
+            intake_status = "ready_for_review"
 
         llm_output = self._routing_llm_output(
             artist_decision=artist_decision,
@@ -160,6 +168,15 @@ class TattooRouter:
             appointment_type=extracted.appointment_type,
             availability=extracted.availability,
             tattoo_project_type=extracted.tattoo_project_type,
+            party_size=extracted.party_size,
+            projects=extracted.projects,
+            size_description=extracted.size_description,
+            size_status=extracted.size_status,
+            artist_preference_mode=extracted.artist_preference_mode,
+            pricing_requested=extracted.pricing_requested,
+            intake_status=intake_status,
+            staff_review_required=staff_review_required,
+            review_reasons=review_reasons,
             suggested_artist=artist_decision.suggested_artist,
             confidence_level=artist_decision.confidence_level,
             ai_reasoning=ai_reasoning,
@@ -167,7 +184,7 @@ class TattooRouter:
             risk_level=risk_level,
             draft_reply=draft_reply,
             auto_reply_allowed=risk_level == "low",
-            telegram_review_required=risk_level == "high",
+            telegram_review_required=staff_review_required,
         )
 
     def _generate_draft_reply(
@@ -187,6 +204,7 @@ class TattooRouter:
                 existing_db_state=existing_db_state,
                 current_message=current_message,
                 recent_chat_history=recent_chat_history,
+                suggested_artist=suggested_artist,
             )
         if extracted.missing_information:
             return self._reply_composer.compose_validation(
@@ -212,6 +230,17 @@ class TattooRouter:
                     "appointment_type": extracted.appointment_type,
                     "availability": extracted.availability,
                     "tattoo_project_type": extracted.tattoo_project_type,
+                    "party_size": extracted.party_size,
+                    "projects": [
+                        project.model_dump(mode="json")
+                        for project in extracted.projects
+                    ],
+                    "size_description": extracted.size_description,
+                    "size_status": extracted.size_status,
+                    "artist_preference_mode": (
+                        extracted.artist_preference_mode
+                    ),
+                    "pricing_requested": extracted.pricing_requested,
                 },
                 missing_information=extracted.missing_information,
                 recent_chat_history=recent_chat_history,
@@ -245,8 +274,23 @@ class TattooRouter:
         extracted: TattooExtractionDraft,
     ) -> _ArtistRoutingDecision:
         """Select an artist from cold start, configured rules, or history."""
+        explicit = self._explicit_artist_decision(extracted)
+        if explicit is not None:
+            return explicit
+
         is_cold_start, record_count = self._cold_start_status()
+        rules = self._routing_rule_engine.evaluate(extracted)
+        rule_decision = self._suggest_from_rules(
+            rules=rules,
+            matches=[],
+            extracted=extracted,
+        )
+        if rule_decision is not None:
+            return rule_decision
         if is_cold_start:
+            configured = self._suggest_from_config(extracted)
+            if configured.suggested_artist != "Unclear":
+                return configured
             self._cold_start_manager.log_cold_start_warning()
             return _ArtistRoutingDecision(
                 suggested_artist="Unclear",
@@ -257,7 +301,6 @@ class TattooRouter:
                 cold_start=True,
             )
 
-        rules = self._routing_rule_engine.evaluate(extracted)
         matches = self._search_similar_cases(extracted)
         rule_decision = self._suggest_from_rules(
             rules=rules,
@@ -269,6 +312,33 @@ class TattooRouter:
         if matches:
             return self._suggest_from_history(matches, extracted)
         return self._suggest_from_config(extracted)
+
+    def _explicit_artist_decision(
+        self,
+        extracted: TattooExtractionDraft,
+    ) -> _ArtistRoutingDecision | None:
+        """Honor an active artist explicitly selected by the client."""
+        preferred = extracted.preferred_artist
+        if not preferred or preferred == "No preference":
+            return None
+        profile = next(
+            (
+                artist
+                for artist in self._artist_config.get_active_artists()
+                if artist.display_name.casefold() == preferred.casefold()
+            ),
+            None,
+        )
+        if profile is None:
+            return None
+        return _ArtistRoutingDecision(
+            suggested_artist=profile.display_name,
+            confidence_level="high",
+            reasoning=(
+                f"Suggested artist: {profile.display_name} because the client "
+                "explicitly requested this active artist."
+            ),
+        )
 
     def _cold_start_status(self) -> tuple[bool, int]:
         """Return cold-start state and a safe collected-record count."""
@@ -557,6 +627,24 @@ class TattooRouter:
     ) -> RiskLevel:
         """Classify only complete intakes as high risk for staff review."""
         return "high" if not extracted.missing_information else "low"
+
+    def _review_reasons(
+        self,
+        extracted: TattooExtractionDraft,
+        artist_decision: _ArtistRoutingDecision,
+    ) -> list[str]:
+        """Identify normal inquiries that need staff help before completion."""
+        reasons: list[str] = []
+        if extracted.party_size > 1 or len(extracted.projects) > 1:
+            reasons.append("multiple_tattoo_projects")
+        if extracted.size_description == "not sure":
+            reasons.append("client_unsure_about_size")
+        if (
+            extracted.artist_preference_mode == "recommend"
+            and artist_decision.suggested_artist == "Unclear"
+        ):
+            reasons.append("artist_recommendation_unresolved")
+        return reasons
 
     def _routing_llm_output(
         self,
