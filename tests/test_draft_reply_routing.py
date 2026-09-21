@@ -148,7 +148,7 @@ def test_non_string_draft_reply_uses_validated_fallback() -> None:
 
 
 def test_outlook_route_uses_email_composer_and_one_routing_llm_call() -> None:
-    """Outlook bypasses chat drafting and requests all missing facts."""
+    """Outlook bypasses chat drafting and asks two useful questions."""
     fake_llm = SequentialLLM([_reasoning_response()])
     extracted = TattooExtractionDraft(
         tattoo_idea="Floral tattoo",
@@ -181,7 +181,8 @@ def test_outlook_route_uses_email_composer_and_one_routing_llm_call() -> None:
 
     assert result.draft_reply.startswith("Dear Maruf,\n\n")
     assert "Subject:" not in result.draft_reply
-    assert result.draft_reply.count("\n- ") == 10
+    assert result.draft_reply.count("\n- ") == 2
+    assert "recorded the following" not in result.draft_reply.casefold()
     assert "Dear Maruf," in result.draft_reply
     assert result.risk_level == "low"
     assert result.auto_reply_allowed is True
@@ -224,10 +225,10 @@ def test_first_outlook_price_question_collects_missing_information() -> None:
     assert result.risk_level == "low"
     assert result.auto_reply_allowed is True
     assert result.telegram_review_required is False
-    assert "review the design details before confirming the price" in (
+    assert "confirm the price after reviewing the remaining design details" in (
         result.draft_reply
     )
-    assert "please reply to this email with all of the following" in (
+    assert "please reply to this email with all of the following" not in (
         result.draft_reply
     )
-    assert result.draft_reply.count("\n- ") == 10
+    assert result.draft_reply.count("\n- ") == 2
