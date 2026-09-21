@@ -16,10 +16,12 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ConfigDict, Field
 
 from .errors import AnalysisPipelineError
+from .email_cleaning import strip_quoted_email_content
 from .llm import get_chat_model
 from .prompts import EXTRACTION_SYSTEM_PROMPT, build_extraction_human_prompt
 from .schemas import (
     AppointmentType,
+    ArtistPreferenceMode,
     MISSING_INFORMATION_OPTIONS,
     STYLE_TAG_OPTIONS,
     Message,
@@ -27,6 +29,7 @@ from .schemas import (
     PreferredArtist,
     StyleTag,
     TattooExtractionDraft,
+    TattooProjectDetail,
     TattooProjectType,
     VisualColorPreference,
 )
@@ -41,6 +44,10 @@ _STYLE_TAGS_THAT_RESOLVE_PREFERENCE = _STYLE_TAG_SET - {
     "black-and-grey",
 }
 _MISSING_SET = set(MISSING_INFORMATION_OPTIONS)
+_PRICING_PATTERN = re.compile(
+    r"\b(?:price|pricing|cost|quote|how much|budget)\b",
+    flags=re.IGNORECASE,
+)
 _GENERIC_TATTOO_IDEA_PATTERN = re.compile(
     r"^(?:(?:i|we|the client)\s+)?"
     r"(?:(?:want|wants|need|needs|would like|request|requests|"
@@ -280,6 +287,7 @@ _TATTOO_SUBJECT_WORDS = (
     "snake",
     "symbol",
     "tiger",
+    "tulip",
     "wolf",
 )
 _TATTOO_IDEA_MODIFIERS = (
@@ -377,6 +385,11 @@ class _ExtractionSubset(BaseModel):
         default="",
         description="New tattoo, cover-up, continuation, or touch-up.",
     )
+    party_size: int = Field(default=1, ge=1, le=20)
+    projects: list[TattooProjectDetail] = Field(default_factory=list, max_length=20)
+    size_description: str = Field(default="", max_length=100)
+    artist_preference_mode: ArtistPreferenceMode = "unknown"
+    pricing_requested: bool = False
     missing_information: list[MissingInformationItem] = Field(
         default_factory=list,
         description="Missing items from the required intake checklist.",
@@ -472,6 +485,23 @@ class TattooTextExtractor:
                 appointment_type=resolved_output.appointment_type,
                 availability=resolved_output.availability,
                 tattoo_project_type=resolved_output.tattoo_project_type,
+                party_size=resolved_output.party_size,
+                projects=self._resolve_projects(
+                    llm_projects=resolved_output.projects,
+                    current_message=normalized_message,
+                    style_tags=normalized_tags,
+                    resolved_output=resolved_output,
+                    new_image_urls=safe_image_urls,
+                    existing_db_state=safe_db_state,
+                ),
+                size_description=resolved_output.size_description,
+                size_status=self._size_status(
+                    size_estimate_cm=resolved_output.size_estimate_cm,
+                    size_description=resolved_output.size_description,
+                    current_message=normalized_message,
+                ),
+                artist_preference_mode=resolved_output.artist_preference_mode,
+                pricing_requested=resolved_output.pricing_requested,
                 missing_information=missing_information,
             )
         except Exception as exc:  # pragma: no cover - defensive branch
@@ -599,6 +629,11 @@ class TattooTextExtractor:
             appointment_type=llm_output.appointment_type,
             availability=llm_output.availability,
             tattoo_project_type=llm_output.tattoo_project_type,
+            party_size=llm_output.party_size,
+            projects=llm_output.projects,
+            size_description=llm_output.size_description,
+            artist_preference_mode=llm_output.artist_preference_mode,
+            pricing_requested=llm_output.pricing_requested,
             missing_information=llm_output.missing_information,
         )
 
@@ -627,7 +662,10 @@ class TattooTextExtractor:
             "tattoo idea": self._is_missing_tattoo_idea(
                 llm_output.tattoo_idea
             ),
-            "size in cm": self._is_blank(llm_output.size_estimate_cm),
+            "size in cm": (
+                self._is_blank(llm_output.size_estimate_cm)
+                and self._is_blank(llm_output.size_description)
+            ),
             "placement": self._is_blank(llm_output.placement),
             "tattoo style": not any(
                 tag in _STYLE_TAGS_THAT_RESOLVE_PREFERENCE
@@ -679,10 +717,14 @@ class TattooTextExtractor:
             tattoo_idea=fallback_idea,
             placement="",
             size_estimate_cm=self._extract_size_from_text(current_message),
+            size_description=self._extract_size_description(current_message),
             color_preference="",
             date=self._extract_date_from_text(current_message),
             time=self._extract_time_from_text(current_message),
             preferred_artist=self._extract_preferred_artist_from_text(
+                current_message
+            ),
+            artist_preference_mode=self._extract_artist_preference_mode(
                 current_message
             ),
             appointment_type=self._extract_appointment_type_from_text(
@@ -692,6 +734,8 @@ class TattooTextExtractor:
             tattoo_project_type=self._extract_project_type_from_text(
                 current_message
             ),
+            party_size=self._extract_party_size(current_message),
+            pricing_requested=bool(_PRICING_PATTERN.search(current_message)),
             missing_information=[],
         )
         visual_fallback = self._apply_visual_color_default(
@@ -725,6 +769,25 @@ class TattooTextExtractor:
             appointment_type=resolved_fallback.appointment_type,
             availability=resolved_fallback.availability,
             tattoo_project_type=resolved_fallback.tattoo_project_type,
+            party_size=resolved_fallback.party_size,
+            projects=self._resolve_projects(
+                llm_projects=resolved_fallback.projects,
+                current_message=current_message,
+                style_tags=style_tags,
+                resolved_output=resolved_fallback,
+                new_image_urls=new_image_urls,
+                existing_db_state=existing_db_state,
+            ),
+            size_description=resolved_fallback.size_description,
+            size_status=self._size_status(
+                size_estimate_cm=resolved_fallback.size_estimate_cm,
+                size_description=resolved_fallback.size_description,
+                current_message=current_message,
+            ),
+            artist_preference_mode=(
+                resolved_fallback.artist_preference_mode
+            ),
+            pricing_requested=resolved_fallback.pricing_requested,
             missing_information=missing,
         )
 
@@ -883,6 +946,50 @@ class TattooTextExtractor:
                     field_terms=_PROJECT_TYPE_FIELD_TERMS,
                 )
             ),
+            party_size=self._resolve_party_size(
+                llm_value=llm_output.party_size,
+                current_message=current_message,
+                recent_chat_history=recent_chat_history,
+                existing_db_state=existing_db_state,
+            ),
+            projects=llm_output.projects,
+            size_description=self._resolve_size_description(
+                llm_value=llm_output.size_description,
+                current_message=current_message,
+                recent_chat_history=recent_chat_history,
+                existing_db_state=existing_db_state,
+            ),
+            artist_preference_mode=self._resolve_artist_preference_mode(
+                llm_value=llm_output.artist_preference_mode,
+                preferred_artist=self._normalize_preferred_artist(
+                    self._resolve_context_field(
+                        llm_value=self._normalize_preferred_artist(
+                            llm_output.preferred_artist
+                        ),
+                        current_message=current_message,
+                        recent_chat_history=recent_chat_history,
+                        existing_db_state=existing_db_state,
+                        state_keys=(
+                            "preferred_artist",
+                            "requested_artist",
+                            "assigned_artist",
+                        ),
+                        value_extractor=(
+                            self._extract_preferred_artist_from_text
+                        ),
+                        field_terms=_ARTIST_FIELD_TERMS,
+                    )
+                ),
+                current_message=current_message,
+                recent_chat_history=recent_chat_history,
+                existing_db_state=existing_db_state,
+            ),
+            pricing_requested=self._resolve_pricing_requested(
+                llm_value=llm_output.pricing_requested,
+                current_message=current_message,
+                recent_chat_history=recent_chat_history,
+                existing_db_state=existing_db_state,
+            ),
             missing_information=llm_output.missing_information,
         )
 
@@ -913,6 +1020,126 @@ class TattooTextExtractor:
         if stored_value:
             return stored_value
         return "" if self._is_blank(llm_value) else llm_value
+
+    def _resolve_party_size(
+        self,
+        llm_value: int,
+        current_message: str,
+        recent_chat_history: list[Message],
+        existing_db_state: dict[str, Any],
+    ) -> int:
+        """Preserve the largest explicitly stated party size across the thread."""
+        current_value = self._extract_party_size(current_message)
+        if current_value > 1:
+            return current_value
+        for message in reversed(recent_chat_history):
+            if message.role != "user":
+                continue
+            history_value = self._extract_party_size(message.content)
+            if history_value > 1:
+                return history_value
+        for record in self._state_records(existing_db_state):
+            for key in ("party_size", "client_count", "people_count"):
+                value = record.get(key)
+                if isinstance(value, int) and 1 <= value <= 20:
+                    return value
+                if isinstance(value, str) and value.strip().isdigit():
+                    parsed = int(value.strip())
+                    if 1 <= parsed <= 20:
+                        return parsed
+        return min(max(llm_value, 1), 20)
+
+    def _resolve_size_description(
+        self,
+        llm_value: str,
+        current_message: str,
+        recent_chat_history: list[Message],
+        existing_db_state: dict[str, Any],
+    ) -> str:
+        """Resolve qualitative or explicitly uncertain size answers."""
+        current_value = self._extract_size_description(current_message)
+        if current_value:
+            return current_value
+        if self._is_uncertain_answer(current_message) and any(
+            message.role == "assistant"
+            and any(
+                marker in message.content.casefold()
+                for marker in ("size", "centimet", "how large", "how big")
+            )
+            for message in recent_chat_history[-2:]
+        ):
+            return "not sure"
+        history_value = self._latest_history_value(
+            recent_chat_history,
+            self._extract_size_description,
+        )
+        if history_value:
+            return history_value
+        stored_value = self._get_state_text(
+            existing_db_state,
+            ("size_description", "size_label", "qualitative_size"),
+        )
+        if stored_value:
+            return stored_value
+        return "" if self._is_blank(llm_value) else llm_value
+
+    def _resolve_artist_preference_mode(
+        self,
+        llm_value: ArtistPreferenceMode,
+        preferred_artist: str,
+        current_message: str,
+        recent_chat_history: list[Message],
+        existing_db_state: dict[str, Any],
+    ) -> ArtistPreferenceMode:
+        """Distinguish a named artist from a request for AI recommendation."""
+        current_value = self._extract_artist_preference_mode(current_message)
+        if current_value != "unknown":
+            return current_value
+        for message in reversed(recent_chat_history):
+            if message.role != "user":
+                continue
+            history_value = self._extract_artist_preference_mode(
+                message.content
+            )
+            if history_value != "unknown":
+                return history_value
+        stored = self._get_state_text(
+            existing_db_state,
+            ("artist_preference_mode",),
+        ).casefold()
+        if stored in {
+            "specific",
+            "recommend",
+            "no_preference",
+            "unknown",
+        }:
+            return cast(ArtistPreferenceMode, stored)
+        if preferred_artist == "No preference":
+            return "no_preference"
+        if preferred_artist:
+            return "specific"
+        return llm_value
+
+    def _resolve_pricing_requested(
+        self,
+        llm_value: bool,
+        current_message: str,
+        recent_chat_history: list[Message],
+        existing_db_state: dict[str, Any],
+    ) -> bool:
+        """Remember a pricing question throughout the complete conversation."""
+        if _PRICING_PATTERN.search(current_message):
+            return True
+        if any(
+            message.role == "user"
+            and _PRICING_PATTERN.search(message.content)
+            for message in recent_chat_history
+        ):
+            return True
+        for record in self._state_records(existing_db_state):
+            if record.get("pricing_requested") is True:
+                return True
+        return llm_value
 
     def _resolve_client_name(
         self,
@@ -997,6 +1224,7 @@ class TattooTextExtractor:
             existing_db_state,
             ("tattoo_idea", "idea", "concept"),
         )
+        stored_idea = strip_quoted_email_content(stored_idea)
         if stored_idea and not self._is_missing_tattoo_idea(stored_idea):
             return stored_idea
 
@@ -1286,6 +1514,264 @@ class TattooTextExtractor:
             return ""
         return candidate[:1].upper() + candidate[1:120]
 
+    def _extract_party_size(self, text: str) -> int:
+        """Extract common individual and group wording without guessing."""
+        normalized = " ".join(text.casefold().split())
+        number_words = {
+            "two": 2,
+            "three": 3,
+            "four": 4,
+            "five": 5,
+            "six": 6,
+            "seven": 7,
+            "eight": 8,
+            "nine": 9,
+            "ten": 10,
+        }
+        candidates = [1]
+        for match in re.finditer(
+            r"\b(?:group\s+of|for|we\s+are|there\s+are)\s+"
+            r"(?P<count>\d{1,2}|two|three|four|five|six|seven|eight|nine|ten)"
+            r"\s+(?:people|persons?|friends?|clients?)\b",
+            normalized,
+        ):
+            raw = match.group("count")
+            count = int(raw) if raw.isdigit() else number_words[raw]
+            if 1 <= count <= 20:
+                candidates.append(count)
+        if re.search(
+            r"\b(?:me|myself)\s+and\s+my\s+"
+            r"(?:girlfriend|boyfriend|partner|wife|husband|friend|sister|brother)\b",
+            normalized,
+        ) or re.search(
+            r"\bmy\s+(?:girlfriend|boyfriend|partner|wife|husband|friend|"
+            r"sister|brother)\s+and\s+(?:me|i)\b",
+            normalized,
+        ):
+            candidates.append(2)
+        if re.search(r"\b(?:both\s+of\s+us|the\s+two\s+of\s+us)\b", normalized):
+            candidates.append(2)
+        return max(candidates)
+
+    def _extract_size_description(self, text: str) -> str:
+        """Return natural size wording when an exact measurement is unavailable."""
+        normalized = " ".join(text.casefold().split())
+        descriptions = (
+            (r"\b(?:hand[- ]?sized?|size\s+of\s+(?:a|my|your)\s+hand)\b", "hand-sized"),
+            (r"\b(?:palm[- ]?sized?|size\s+of\s+(?:a|my|your)\s+palm)\b", "palm-sized"),
+            (r"\bcredit[- ]?card[- ]?sized?\b", "credit-card-sized"),
+            (r"\bcoin[- ]?sized?\b", "coin-sized"),
+            (r"\bmatchbox[- ]?sized?\b", "matchbox-sized"),
+        )
+        for pattern, description in descriptions:
+            if re.search(pattern, normalized):
+                return description
+        if self._is_uncertain_answer(normalized) and re.search(
+            r"\b(?:size|large|big|small|centimet|\bcm\b)\b",
+            normalized,
+        ):
+            return "not sure"
+        return ""
+
+    def _is_uncertain_answer(self, text: str) -> bool:
+        """Detect an explicit statement that the client does not know."""
+        normalized = " ".join(text.casefold().split())
+        return bool(
+            re.search(
+                r"\b(?:not sure|unsure|do not know|don't know|dont know|"
+                r"no idea|you decide|please advise)\b",
+                normalized,
+            )
+        )
+
+    def _size_status(
+        self,
+        size_estimate_cm: str,
+        size_description: str,
+        current_message: str,
+    ) -> str:
+        """Classify whether a supplied size is exact, approximate, or unknown."""
+        if size_estimate_cm:
+            if re.search(
+                r"\b(?:about|around|approximately|approx|roughly|maybe)\b",
+                current_message,
+                flags=re.IGNORECASE,
+            ):
+                return "approximate"
+            return "exact"
+        if size_description and size_description != "not sure":
+            return "approximate"
+        return "unknown"
+
+    def _extract_artist_preference_mode(
+        self,
+        text: str,
+    ) -> ArtistPreferenceMode:
+        """Interpret recommendation requests as a valid artist answer."""
+        normalized = " ".join(text.casefold().split())
+        if re.search(
+            r"\b(?:recommend|suggest)\b.{0,45}\b(?:artist|best fit|who)\b|"
+            r"\b(?:best fit|best artist)\b|"
+            r"\b(?:do not|don't|dont)\s+know\b.{0,35}\bartist\b",
+            normalized,
+        ):
+            return "recommend"
+        if re.search(
+            r"\b(?:no\s+(?:artist\s+)?preference|any\s+artist|"
+            r"whoever\s+(?:is|you\s+think)|you\s+(?:can\s+)?choose)\b",
+            normalized,
+        ):
+            return "no_preference"
+        if self._extract_preferred_artist_from_text(normalized) not in {
+            "",
+            "No preference",
+        }:
+            return "specific"
+        return "unknown"
+
+    def _resolve_projects(
+        self,
+        llm_projects: list[TattooProjectDetail],
+        current_message: str,
+        style_tags: list[StyleTag],
+        resolved_output: _ExtractionSubset,
+        new_image_urls: list[str],
+        existing_db_state: dict[str, Any],
+    ) -> list[TattooProjectDetail]:
+        """Build per-person tattoo details while preserving prior project state."""
+        projects = [project.model_copy(deep=True) for project in llm_projects]
+        if not projects:
+            projects = self._stored_projects(existing_db_state)
+
+        party_size = resolved_output.party_size
+        labels = self._party_labels(current_message, party_size)
+        if party_size > 1 and len(projects) < party_size:
+            existing_by_label = {
+                project.person_label.casefold(): project for project in projects
+            }
+            projects = [
+                existing_by_label.get(label.casefold())
+                or TattooProjectDetail(person_label=label)
+                for label in labels
+            ]
+        elif not projects and party_size <= 1:
+            return []
+
+        person_colors = self._extract_person_colors(current_message)
+        size_status = self._size_status(
+            resolved_output.size_estimate_cm,
+            resolved_output.size_description,
+            current_message,
+        )
+        resolved: list[TattooProjectDetail] = []
+        for index, project in enumerate(projects):
+            label = project.person_label or (
+                labels[index] if index < len(labels) else f"Person {index + 1}"
+            )
+            color = person_colors.get(label.casefold())
+            if not color:
+                color = project.color_preference or resolved_output.color_preference
+            resolved.append(
+                project.model_copy(
+                    update={
+                        "person_label": label,
+                        "tattoo_idea": (
+                            project.tattoo_idea or resolved_output.tattoo_idea
+                        ),
+                        "style_tags": project.style_tags or style_tags,
+                        "placement": (
+                            project.placement or resolved_output.placement
+                        ),
+                        "size_estimate_cm": (
+                            project.size_estimate_cm
+                            or resolved_output.size_estimate_cm
+                        ),
+                        "size_description": (
+                            project.size_description
+                            or resolved_output.size_description
+                        ),
+                        "size_status": (
+                            project.size_status
+                            if project.size_status != "unknown"
+                            else size_status
+                        ),
+                        "color_preference": color,
+                        "tattoo_project_type": (
+                            project.tattoo_project_type
+                            or resolved_output.tattoo_project_type
+                        ),
+                        "reference_image_urls": (
+                            new_image_urls or project.reference_image_urls
+                        ),
+                    }
+                )
+            )
+        return resolved
+
+    def _stored_projects(
+        self,
+        existing_db_state: dict[str, Any],
+    ) -> list[TattooProjectDetail]:
+        """Read valid project objects from root or nested intake state."""
+        for record in self._state_records(existing_db_state):
+            raw_projects = record.get("projects")
+            if not isinstance(raw_projects, list):
+                continue
+            projects: list[TattooProjectDetail] = []
+            for item in raw_projects:
+                try:
+                    projects.append(TattooProjectDetail.model_validate(item))
+                except (TypeError, ValueError):
+                    continue
+            if projects:
+                return projects
+        return []
+
+    def _party_labels(self, text: str, party_size: int) -> list[str]:
+        """Create stable human-readable labels for common relationship wording."""
+        normalized = text.casefold()
+        relationships = (
+            ("girlfriend", "Girlfriend"),
+            ("boyfriend", "Boyfriend"),
+            ("partner", "Partner"),
+            ("wife", "Wife"),
+            ("husband", "Husband"),
+            ("sister", "Sister"),
+            ("brother", "Brother"),
+            ("friend", "Friend"),
+        )
+        labels = ["Client"]
+        for token, label in relationships:
+            if re.search(rf"\b(?:my\s+)?{token}\b", normalized):
+                labels.append(label)
+                break
+        while len(labels) < party_size:
+            labels.append(f"Person {len(labels) + 1}")
+        return labels[:party_size]
+
+    def _extract_person_colors(self, text: str) -> dict[str, str]:
+        """Attach named colours to the person they describe in group requests."""
+        normalized = " ".join(text.casefold().split())
+        color_names = r"red|blue|green|yellow|purple|orange|pink|black"
+        labels = {
+            "Client": r"(?:mine|my\s+one|me|i)",
+            "Girlfriend": r"(?:my\s+)?girlfriend(?:'s)?",
+            "Boyfriend": r"(?:my\s+)?boyfriend(?:'s)?",
+            "Partner": r"(?:my\s+)?partner(?:'s)?",
+            "Wife": r"(?:my\s+)?wife(?:'s)?",
+            "Husband": r"(?:my\s+)?husband(?:'s)?",
+            "Friend": r"(?:my\s+)?friend(?:'s)?",
+        }
+        found: dict[str, str] = {}
+        for label, subject in labels.items():
+            match = re.search(
+                rf"\b{subject}\b.{{0,45}}?\b(?P<color>{color_names})\b",
+                normalized,
+            )
+            if match:
+                found[label.casefold()] = match.group("color")
+        return found
+
     def _extract_preferred_artist_from_text(self, text: str) -> str:
         """Extract one of the five client-selectable artist preferences."""
         normalized = " ".join(text.casefold().split())
@@ -1300,7 +1786,10 @@ class TattooTextExtractor:
         matches: list[tuple[int, str]] = []
         no_preference_pattern = re.compile(
             r"\b(?:no\s+(?:artist\s+)?preference|any\s+artist|"
-            r"whoever\s+(?:is|you\s+think)|you\s+(?:can\s+)?choose)\b"
+            r"whoever\s+(?:is|you\s+think)|you\s+(?:can\s+)?choose|"
+            r"(?:recommend|suggest)\b.{0,35}\b(?:artist|best fit)|"
+            r"(?:best fit|best artist)|"
+            r"(?:do not|don't|dont)\s+know\b.{0,30}\bartist)\b"
         )
         for match in no_preference_pattern.finditer(normalized):
             matches.append((match.start(), "No preference"))
@@ -1438,6 +1927,12 @@ class TattooTextExtractor:
         for alias, canonical in _PLACEMENT_ALIASES:
             pattern = rf"\b{re.escape(alias)}\b"
             for match in re.finditer(pattern, normalized):
+                suffix = normalized[match.end() : match.end() + 8]
+                if alias in {"hand", "palm"} and re.match(
+                    r"[- ]siz(?:e|ed)\b",
+                    suffix,
+                ):
+                    continue
                 if not self._phrase_is_negated(normalized, match.start()):
                     matches.append((match.start(), canonical))
         if not matches:
@@ -1467,6 +1962,9 @@ class TattooTextExtractor:
                     specific_matches.append((match.start(), value))
         if specific_matches:
             return max(specific_matches, key=lambda item: item[0])[1]
+
+        if re.search(r"\bwatercolou?r\b", normalized):
+            return "color"
 
         generic_matches = list(re.finditer(r"\bcolou?r\b", normalized))
         if generic_matches:
