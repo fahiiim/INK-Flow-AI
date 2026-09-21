@@ -1,4 +1,4 @@
-"""Tests for the high-risk Telegram summary API endpoint."""
+"""Tests for the staff-review Telegram summary API endpoint."""
 
 from __future__ import annotations
 
@@ -175,13 +175,15 @@ def test_low_risk_endpoint_returns_conflict_without_summary() -> None:
 
     assert response.status_code == 409
     assert response.json() == {
-        "detail": "Telegram summary is available only for high-risk inquiries."
+        "detail": (
+            "Telegram summary is available only for staff-review inquiries."
+        )
     }
     assert len(brain.calls) == 1
 
 
-def test_incomplete_high_risk_result_cannot_create_telegram_summary() -> None:
-    """A stale high-risk label cannot bypass the completeness gate."""
+def test_incomplete_staff_review_can_create_telegram_summary() -> None:
+    """Staff can receive a concise summary before every detail is known."""
     inconsistent = _analysis("high").model_copy(
         update={"missing_information": ["reference images"]}
     )
@@ -193,13 +195,10 @@ def test_incomplete_high_risk_result_cannot_create_telegram_summary() -> None:
             json=_payload(),
         )
 
-    assert response.status_code == 409
-    assert response.json() == {
-        "detail": (
-            "Telegram summary requires a complete inquiry with no missing "
-            "information."
-        )
-    }
+    assert response.status_code == 200
+    body = response.json()
+    assert body["staff_review_required"] is True
+    assert "Still needed: reference images." in body["summary"]
 
 
 def test_complete_summary_is_short_and_staff_friendly() -> None:
@@ -262,3 +261,22 @@ def test_complete_summary_is_short_and_staff_friendly() -> None:
     assert "fahimsarker0805@gmail.com" not in summary
     assert "lead ID" not in summary
     assert "Cold start mode" not in summary
+
+
+def test_summary_response_exposes_reference_images_for_telegram_media() -> None:
+    """The backend receives image URLs alongside the Telegram message text."""
+    brain = StubAIBrain(_analysis("high"))
+    payload = _payload()
+    payload["new_image_urls"] = [
+        "https://example.com/reference-one.jpg",
+        "https://example.com/reference-two.jpg",
+    ]
+
+    with _client(brain) as client:
+        response = client.post(
+            "/api/v1/inquiries/telegram-summary",
+            json=payload,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["reference_image_urls"] == payload["new_image_urls"]
