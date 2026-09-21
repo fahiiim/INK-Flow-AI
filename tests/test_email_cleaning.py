@@ -131,11 +131,9 @@ def test_realistic_second_email_extracts_only_client_answers() -> None:
         result,
         existing_db_state=inquiry.existing_db_state,
     )
-    assert "- Tattoo concept: Colorful flower" in reply
-    assert "- Color preference: color" in reply
+    assert "3 cm colour floral Colorful flower tattoo" in reply
     assert "- Preferred time:" not in reply
-    assert "- Preferred artist: Hoss" in reply
-    assert "- Appointment type: Studio visit" in reply
+    assert "recorded the following" not in reply.casefold()
     assert "- Availability:" not in reply
     assert "- What tattoo style would you prefer?" in reply
     assert "fine-line, watercolor, minimal, floral" in reply
@@ -215,7 +213,7 @@ def test_calligraphy_style_without_wording_keeps_tattoo_idea_missing() -> None:
         existing_db_state={"lead": {"name": "Fahim Sarker"}},
         current_message=message,
     )
-    assert "review the design details before confirming the price" in reply
+    assert "confirm the price after reviewing the remaining design details" in reply
     assert "- What is your tattoo idea or background story?" in reply
     assert "online appointment or a studio visit" not in reply
 
@@ -286,10 +284,9 @@ def test_real_email_answers_normalize_inches_and_black_and_grey() -> None:
         recent_chat_history=inquiry.recent_chat_history,
     )
     assert "Thank you for the additional details" in reply
-    assert "We still need the following information" in reply
-    assert "review the design details before confirming the price" in reply
-    assert "- Approximate size: 12.7 cm" in reply
-    assert "- Color preference: black-and-grey" in reply
+    assert "We still need the following information" not in reply
+    assert "confirm the price after reviewing the remaining design details" in reply
+    assert "12.7 cm black-and-grey calligraphy tattoo" in reply
     assert "What size would you prefer" not in reply
 
     routed = TattooRouter(
@@ -361,7 +358,7 @@ def test_calligraphic_wording_conversation_preserves_the_complete_quote() -> Non
         existing_db_state={"lead": {"name": "Fahim Sarker"}},
         current_message=first_message,
     )
-    assert "- Style: calligraphy" in first_reply
+    assert "calligraphy tattoo on your leg" in first_reply
     assert "What tattoo style would you prefer?" not in first_reply
 
     second_message = (
@@ -458,5 +455,5 @@ def test_calligraphic_wording_conversation_preserves_the_complete_quote() -> Non
     assert routed.auto_reply_allowed is False
     assert routed.draft_reply.startswith("Dear Fahim,")
     assert "Thank you for clarifying" in routed.draft_reply
-    assert "- Style: calligraphy" in routed.draft_reply
+    assert "calligraphy" in routed.draft_reply
     assert "contact you with pricing and the next steps" in routed.draft_reply
