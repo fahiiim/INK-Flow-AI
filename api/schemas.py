@@ -6,7 +6,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, model_validator
 
-from ai_brain.schemas import AIExtractionOutput, Message, TattooInquiryInput
+from ai_brain.schemas import (
+    AIExtractionOutput,
+    Message,
+    RiskLevel,
+    TattooInquiryInput,
+)
 
 __all__ = [
     "AIExtractionOutput",
@@ -102,11 +107,17 @@ class TelegramSummaryInput(TattooInquiryInput):
 
 
 class TelegramSummaryResponse(BaseModel):
-    """Staff-facing high-risk summary and client draft reply."""
+    """Staff-review summary plus the separately generated client draft."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    risk_level: Literal["high"]
+    risk_level: RiskLevel
+    staff_review_required: bool
+    review_reasons: list[StrictStr] = Field(default_factory=list, max_length=20)
+    reference_image_urls: list[StrictStr] = Field(
+        default_factory=list,
+        max_length=20,
+    )
     summary: StrictStr = Field(min_length=1, max_length=5000)
     draft_reply: StrictStr = Field(min_length=1, max_length=2000)
     telegram_message: StrictStr = Field(min_length=1, max_length=7000)
