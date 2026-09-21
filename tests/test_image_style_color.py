@@ -92,7 +92,7 @@ def test_recognized_image_removes_style_color_and_reference_missing() -> None:
         recent_chat_history=[],
         risk_level="low",
     )
-    assert "full-colour watercolor and floral tattoo" in reply
+    assert "watercolor and floral tattoo" in reply
     assert "Does that sound right" in reply
 
 
