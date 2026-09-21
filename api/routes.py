@@ -155,7 +155,7 @@ def analyze_inquiry(
         },
         status.HTTP_409_CONFLICT: {
             "model": ErrorResponse,
-            "description": "The inquiry is not high risk.",
+            "description": "The inquiry does not require staff review.",
         },
         status.HTTP_502_BAD_GATEWAY: {
             "model": ErrorResponse,
@@ -166,26 +166,18 @@ def analyze_inquiry(
             "description": "The AI service is not configured.",
         },
     },
-    summary="Create a high-risk Telegram summary",
+    summary="Create a staff-review Telegram summary",
 )
 def create_telegram_summary(
     payload: TelegramSummaryInput,
     brain: BrainDependency,
 ) -> TelegramSummaryResponse:
-    """Return staff summary text without sending it to Telegram."""
+    """Return review text and media references without sending Telegram."""
     analysis = _process_inquiry(payload, brain)
-    if analysis.risk_level != "high":
+    if not analysis.telegram_review_required:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Telegram summary is available only for high-risk inquiries.",
-        )
-    if analysis.missing_information:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "Telegram summary requires a complete inquiry with no "
-                "missing information."
-            ),
+            detail="Telegram summary is available only for staff-review inquiries.",
         )
 
     summary = SUMMARY_BUILDER.build(payload, analysis)
@@ -194,7 +186,10 @@ def create_telegram_summary(
         draft_reply=analysis.draft_reply,
     )
     return TelegramSummaryResponse(
-        risk_level="high",
+        risk_level=analysis.risk_level,
+        staff_review_required=True,
+        review_reasons=analysis.review_reasons,
+        reference_image_urls=payload.new_image_urls,
         summary=summary,
         draft_reply=analysis.draft_reply,
         telegram_message=telegram_message,
