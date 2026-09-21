@@ -1,4 +1,4 @@
-"""Staff-facing high-risk inquiry summary composition."""
+"""Staff-facing inquiry review summary composition."""
 
 from __future__ import annotations
 
@@ -17,18 +17,19 @@ class HighRiskSummaryBuilder:
         analysis: AIExtractionOutput,
     ) -> str:
         """Build one concise narrative paragraph for studio staff."""
-        if analysis.risk_level != "high":
-            raise ValueError("A Telegram summary requires high risk.")
-        if analysis.missing_information:
-            raise ValueError(
-                "A Telegram summary requires a complete inquiry."
-            )
+        if not analysis.telegram_review_required:
+            raise ValueError("A Telegram summary requires staff review.")
 
         state = inquiry.existing_db_state
         client = self._client_description(state, analysis.client_name)
         idea = self._clean_text(analysis.tattoo_idea)
         project_type = self._clean_text(analysis.tattoo_project_type)
-        if idea:
+        if len(analysis.projects) > 1:
+            opening = (
+                f"{client} submitted {len(analysis.projects)} tattoo projects "
+                f"for a party of {analysis.party_size}."
+            )
+        elif idea:
             project = project_type or "tattoo"
             opening = f'{client} is requesting a {project}: "{idea}".'
         elif project_type:
@@ -37,9 +38,14 @@ class HighRiskSummaryBuilder:
             opening = f"{client} is requesting a tattoo."
 
         sentences = [opening]
-        design_description = self._design_description(analysis)
-        if design_description:
-            sentences.append(design_description)
+        if len(analysis.projects) > 1:
+            project_summary = self._projects_description(analysis)
+            if project_summary:
+                sentences.append(project_summary)
+        if len(analysis.projects) <= 1:
+            design_description = self._design_description(analysis)
+            if design_description:
+                sentences.append(design_description)
 
         logistics = self._logistics_description(inquiry, analysis)
         if logistics:
@@ -65,6 +71,31 @@ class HighRiskSummaryBuilder:
             sentence if sentence.endswith((".", "!", "?")) else sentence + "."
             for sentence in sentences
         )
+
+    def _projects_description(self, analysis: AIExtractionOutput) -> str:
+        """Describe each group member's tattoo without merging their details."""
+        descriptions: list[str] = []
+        for project in analysis.projects:
+            details: list[str] = []
+            if project.tattoo_idea:
+                details.append(self._clean_text(project.tattoo_idea))
+            styles = [tag for tag in project.style_tags if tag != "unknown"]
+            if styles:
+                details.append(f"style: {self._natural_list(styles)}")
+            if project.color_preference:
+                details.append(f"color: {project.color_preference}")
+            size = project.size_estimate_cm or project.size_description
+            if size:
+                details.append(f"size: {self._clean_text(size)}")
+            if project.placement:
+                details.append(f"placement: {project.placement}")
+            if details:
+                descriptions.append(
+                    f"{project.person_label}: {', '.join(details)}"
+                )
+        if not descriptions:
+            return ""
+        return "Projects - " + "; ".join(descriptions) + "."
 
     def combine_with_draft(self, summary: str, draft_reply: str) -> str:
         """Place the client draft after the staff summary for Telegram."""
@@ -120,7 +151,11 @@ class HighRiskSummaryBuilder:
             quantity = "one" if count == 1 else str(count)
             noun = "image" if count == 1 else "images"
             clauses.append(f"provided {quantity} reference {noun}")
-        if analysis.preferred_artist:
+        if analysis.artist_preference_mode == "recommend":
+            clauses.append("asked for an artist recommendation")
+        elif analysis.preferred_artist == "No preference":
+            clauses.append("has no artist preference")
+        elif analysis.preferred_artist:
             clauses.append(f"prefers {analysis.preferred_artist}")
         if analysis.appointment_type == "online":
             clauses.append("wants an online appointment")
