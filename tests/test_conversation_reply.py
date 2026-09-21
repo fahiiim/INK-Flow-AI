@@ -236,8 +236,8 @@ def test_whatsapp_style_question_lists_every_supported_style() -> None:
     )
 
 
-def test_outlook_email_requests_every_missing_item_at_once() -> None:
-    """Outlook receives one professional email with the full missing list."""
+def test_outlook_email_asks_only_the_next_two_missing_items() -> None:
+    """Outlook starts a natural conversation with two useful questions."""
     extracted = TattooExtractionDraft(
         tattoo_idea="",
         style_tags=["unknown"],
@@ -271,27 +271,17 @@ def test_outlook_email_requests_every_missing_item_at_once() -> None:
 
     assert reply.startswith("Dear Maruf,\n\n")
     assert "Subject:" not in reply
-    assert "please reply to this email with all of the following" in reply
+    assert "we'd be happy to help" in reply
+    assert "recorded the following" not in reply.casefold()
+    assert "please reply to this email with all of the following" not in reply
     assert "- What is your full name?" in reply
     assert "- What is your tattoo idea or background story?" in reply
-    assert "- What size would you prefer in centimetres?" in reply
-    assert "- Where on your body would you like the tattoo?" in reply
-    assert "- Would you like colour or black and grey?" in reply
-    assert "- What tattoo style would you prefer?" in reply
-    assert (
-        "fine-line, watercolor, minimal, floral, micro-realism, "
-        "black-and-grey, calligraphy, traditional, geometric" in reply
-    )
-    assert "- Could you share any reference or inspiration images?" in reply
-    assert "Please choose Hoss, Nina, Lana, Sandra, Silva" in reply
-    assert "- Would you prefer an online appointment or a studio visit?" in reply
-    assert "Please reply with online or studio visit." in reply
+    assert "- What size would you prefer in centimetres?" not in reply
+    assert reply.count("\n- ") == 2
+    assert "- Where on your body would you like the tattoo?" not in reply
     assert "studio_visit" not in reply
     assert "service code" not in reply.casefold()
     assert "CH -" not in reply
-    assert "- What are your preferred dates or general availability?" in reply
-    assert "new tattoo, cover-up, continuation, or touch-up" in reply
-    assert "Thank you for contacting Tattoo Hysteria." in reply
     assert reply.endswith("Kind regards,\nTattoo Hysteria")
 
 
@@ -317,16 +307,11 @@ def test_outlook_complete_inquiry_confirms_review_without_questions() -> None:
 
     assert reply.startswith("Dear Maruf,\n\n")
     assert "Subject:" not in reply
-    assert "- Tattoo concept: Fine-line lotus" in reply
-    assert "- Style: fine-line" in reply
-    assert "- Placement: inner wrist" in reply
-    assert "- Preferred date: 2026-09-04" in reply
-    assert "- Preferred time: 14:30" in reply
-    assert "- Preferred artist: Silva" in reply
-    assert "- Appointment type: Studio visit" in reply
+    assert "5cm black-and-grey fine-line Fine-line lotus tattoo" in reply
+    assert "on your inner wrist" in reply
+    assert "recorded the following" not in reply.casefold()
+    assert reply.count("\n- ") == 0
     assert "studio_visit" not in reply
-    assert "- Availability: Weekends" in reply
-    assert "- Tattoo project type: new tattoo" in reply
     assert "all of the following information" not in reply
     assert "contact you with the next steps" in reply
 
@@ -351,6 +336,6 @@ def test_outlook_hides_internal_enum_and_duplicate_availability() -> None:
 
     reply = ConversationReplyComposer().compose_outlook_email(extracted)
 
-    assert "- Appointment type: Studio visit" in reply
+    assert "3 cm colour fine-line Colorful flower tattoo" in reply
     assert "studio_visit" not in reply
     assert "- Availability:" not in reply
