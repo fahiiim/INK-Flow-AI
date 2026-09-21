@@ -31,6 +31,10 @@ _HTML_LINE_BREAKS = re.compile(
     r"(?i)<br\s*/?>|</(?:p|div|li|tr|h[1-6])\s*>",
 )
 _HTML_TAG = re.compile(r"(?s)<[^>]+>")
+_SIGNATURE_MARKER = re.compile(
+    r"(?im)^[ \t]*(?:kind regards|best regards|warm regards|regards|"
+    r"sincerely|cheers)[,!]?[ \t]*$"
+)
 
 
 def strip_quoted_email_content(value: str) -> str:
@@ -46,5 +50,8 @@ def strip_quoted_email_content(value: str) -> str:
     newest_reply = _HTML_LINE_BREAKS.sub("\n", newest_reply)
     newest_reply = _HTML_TAG.sub("", newest_reply)
     newest_reply = html.unescape(newest_reply)
+    signature = _SIGNATURE_MARKER.search(newest_reply)
+    if signature is not None:
+        newest_reply = newest_reply[: signature.start()]
     lines = [line.rstrip() for line in newest_reply.split("\n")]
     return "\n".join(lines).strip()
