@@ -47,6 +47,10 @@ _SCHEDULE_TERMS = (
 _PRICING_PATTERN = re.compile(
     r"\b(?:price|pricing|cost|quote|how much|budget)\b"
 )
+_POSSIBLE_PATTERN = re.compile(
+    r"\b(?:is|would)\b.{0,30}\bpossible\b",
+    flags=re.IGNORECASE,
+)
 _MANUAL_REVIEW_PATTERNS = (
     _PRICING_PATTERN,
     re.compile(r"\b(?:book|booking|booked|deposit)\b"),
@@ -170,7 +174,10 @@ class ConversationReplyComposer:
     ) -> str:
         """Acknowledge the latest turn and ask only the next useful question."""
         history = recent_chat_history or []
-        pricing_requested = pricing_was_requested(current_message, history)
+        pricing_requested = (
+            extracted.pricing_requested
+            or pricing_was_requested(current_message, history)
+        )
         manual_review = risk_level == "high" and requires_manual_review(
             current_message,
             history,
@@ -228,7 +235,10 @@ class ConversationReplyComposer:
     ) -> str:
         """Summarize extracted facts once, unless already confirmed."""
         history = recent_chat_history or []
-        pricing_requested = pricing_was_requested(current_message, history)
+        pricing_requested = (
+            extracted.pricing_requested
+            or pricing_was_requested(current_message, history)
+        )
         if risk_level == "high":
             return self.compose(
                 extracted=extracted,
@@ -264,10 +274,15 @@ class ConversationReplyComposer:
             missing_information=extracted.missing_information,
             history=history,
         )[:1]
-        reply_parts = [
-            summary,
-            "Does that sound right, or would you like to change anything?",
-        ]
+        reply_parts = []
+        if _POSSIBLE_PATTERN.search(current_message):
+            reply_parts.append("Yes, we can help with that.")
+        reply_parts.extend(
+            [
+                summary,
+                "Does that sound right, or would you like to change anything?",
+            ]
+        )
         if pricing_requested:
             reply_parts.append(
                 "The studio can confirm the price after reviewing the "
@@ -285,14 +300,18 @@ class ConversationReplyComposer:
         existing_db_state: Mapping[str, object] | None = None,
         current_message: str = "",
         recent_chat_history: Sequence[Message] | None = None,
+        suggested_artist: str = "Unclear",
     ) -> str:
-        """Create one professional email containing every missing request."""
+        """Create a natural email that asks only the next useful questions."""
         history = recent_chat_history or []
         is_follow_up = self._is_outlook_follow_up(
             history,
             existing_db_state,
         )
-        pricing_requested = pricing_was_requested(current_message, history)
+        pricing_requested = (
+            extracted.pricing_requested
+            or pricing_was_requested(current_message, history)
+        )
         missing_information = list(extracted.missing_information)
         correction = any(
             term in current_message.casefold() for term in _CORRECTION_TERMS
@@ -304,58 +323,62 @@ class ConversationReplyComposer:
             ),
             (
                 (
-                    "Thank you for clarifying. We have corrected your tattoo "
-                    "inquiry."
+                    "Thank you for clarifying - I have that noted correctly "
+                    "now."
                     if correction
-                    else "Thank you for the additional details. We have "
-                    "updated your tattoo inquiry."
+                    else "Thank you for the additional details."
                 )
                 if is_follow_up
-                else "Thank you for contacting Tattoo Hysteria. We have "
-                "received your tattoo inquiry."
+                else (
+                    "Yes, we can help with that - thank you for reaching "
+                    "out to Tattoo Hysteria."
+                    if _POSSIBLE_PATTERN.search(current_message)
+                    else "Thank you for reaching out to Tattoo Hysteria - "
+                    "we'd be happy to help with your tattoo request."
+                )
             ),
         ]
 
-        if pricing_requested and missing_information:
+        request_summary = self._human_request_summary(extracted)
+        if request_summary:
+            sections.append(request_summary)
+
+        if (
+            extracted.artist_preference_mode == "recommend"
+            and suggested_artist != "Unclear"
+        ):
             sections.append(
-                "The studio team will review the design details before "
-                "confirming the price."
+                f"Based on the style, {suggested_artist} looks like the "
+                "strongest match for your request."
             )
 
-        known_details = self._outlook_known_details(extracted)
-        if known_details:
+        if pricing_requested:
             sections.append(
-                "We have recorded the following details:\n"
-                + "\n".join(
-                    f"- {label}: {value}" for label, value in known_details
-                )
+                "We can confirm the price after reviewing the remaining "
+                "design details and any reference images."
             )
 
         if missing_information:
-            requested_details = "\n".join(
-                f"- {_MISSING_EMAIL_REQUESTS[item]}"
-                for item in missing_information
+            questions = self._select_questions(
+                missing_information=missing_information,
+                history=list(history),
             )
-            request_intro = (
-                "We still need the following information to complete your "
-                "request:\n"
-                if is_follow_up
-                else "To help us review your request, please reply to this "
-                "email with all of the following information:\n"
-            )
-            sections.extend(
-                [
-                    f"{request_intro}{requested_details}",
-                    (
-                        "Once we receive these details, our studio team will "
-                        "review your inquiry and contact you with the next "
-                        "steps."
-                    ),
-                ]
+            if questions:
+                intro = (
+                    "To help us move this forward, could you let me know:"
+                    if not is_follow_up
+                    else "A little more detail would help us move forward:"
+                )
+                sections.append(
+                    intro + "\n" + "\n".join(f"- {item}" for item in questions)
+                )
+            sections.append(
+                "Once we have those details, we'll guide you through the next "
+                "step."
             )
         else:
             sections.append(
-                "Our studio team will review your completed inquiry and "
+                "Our studio team will review everything and "
                 + (
                     "contact you with pricing and the next steps."
                     if pricing_requested
@@ -365,6 +388,127 @@ class ConversationReplyComposer:
 
         sections.append("Kind regards,\nTattoo Hysteria")
         return "\n\n".join(sections)
+
+    def _human_request_summary(
+        self,
+        extracted: TattooExtractionDraft,
+    ) -> str:
+        """Describe known client details as prose rather than an audit log."""
+        if len(extracted.projects) > 1:
+            project_designs = [
+                self._project_design(project)
+                for project in extracted.projects
+            ]
+            if (
+                project_designs[0]
+                and len(set(project_designs)) == 1
+            ):
+                design = project_designs[0]
+                plural_design = (
+                    design[:-6] + "tattoos"
+                    if design.endswith("tattoo")
+                    else design + "s"
+                )
+                recipients = [
+                    "one " + self._project_recipient(project)
+                    for project in extracted.projects
+                ]
+                return (
+                    f"It sounds like you're planning {len(project_designs)} "
+                    f"{plural_design}, {self._natural_join(recipients)}."
+                )
+            project_phrases = [
+                self._project_phrase(project, index)
+                for index, project in enumerate(extracted.projects)
+            ]
+            useful = [phrase for phrase in project_phrases if phrase]
+            if useful:
+                return "It sounds like you're planning " + self._natural_join(
+                    useful
+                ) + "."
+            return (
+                f"It sounds like this request is for {extracted.party_size} "
+                "people."
+            )
+
+        details: list[str] = []
+        if extracted.size_estimate_cm:
+            details.append(extracted.size_estimate_cm)
+        elif extracted.size_description:
+            details.append(extracted.size_description)
+        known_styles = {
+            tag for tag in extracted.style_tags if tag != "unknown"
+        }
+        if (
+            extracted.color_preference == "color"
+            and "watercolor" not in known_styles
+        ):
+            details.append("colour")
+        elif extracted.color_preference == "black-and-grey":
+            details.append("black-and-grey")
+        details.extend(
+            tag
+            for tag in extracted.style_tags
+            if tag not in {"unknown", "black-and-grey"}
+        )
+        if extracted.tattoo_idea:
+            details.append(extracted.tattoo_idea)
+        if not details and not extracted.placement:
+            return ""
+        design = " ".join(details).strip() or "tattoo"
+        if "tattoo" not in design.casefold():
+            design += " tattoo"
+        placement = (
+            f" on your {extracted.placement}" if extracted.placement else ""
+        )
+        return f"It sounds like you'd like a {design}{placement}."
+
+    def _project_phrase(self, project: object, index: int) -> str:
+        """Create one compact, client-facing phrase for a tattoo project."""
+        recipient = self._project_recipient(project)
+        design = self._project_design(project)
+        if not design:
+            return recipient or f"tattoo {index + 1}"
+        return " ".join(part for part in (design, recipient) if part)
+
+    def _project_design(self, project: object) -> str:
+        """Create the design phrase without its recipient."""
+        details: list[str] = []
+        size = str(getattr(project, "size_estimate_cm", "")).strip()
+        size_description = str(getattr(project, "size_description", "")).strip()
+        color = str(getattr(project, "color_preference", "")).strip()
+        styles = list(getattr(project, "style_tags", []))
+        idea = str(getattr(project, "tattoo_idea", "")).strip()
+        if size or size_description:
+            details.append(size or size_description)
+        if color and not (color == "color" and "watercolor" in styles):
+            details.append("colour" if color == "color" else color)
+        details.extend(
+            str(tag) for tag in styles if tag not in {"unknown", "black-and-grey"}
+        )
+        if idea:
+            details.append(idea)
+        if not details:
+            return ""
+        design = " ".join(details)
+        if "tattoo" not in design.casefold():
+            design += " tattoo"
+        return design
+
+    def _project_recipient(self, project: object) -> str:
+        """Create a natural recipient phrase for one project."""
+        person_label = str(getattr(project, "person_label", "")).strip()
+        if person_label.casefold() == "client":
+            return "for you"
+        return f"for your {person_label.casefold()}" if person_label else ""
+
+    def _natural_join(self, values: Sequence[str]) -> str:
+        """Join short phrases using natural English punctuation."""
+        if len(values) == 1:
+            return values[0]
+        if len(values) == 2:
+            return f"{values[0]} and {values[1]}"
+        return f"{', '.join(values[:-1])}, and {values[-1]}"
 
     def _is_outlook_follow_up(
         self,
@@ -538,12 +682,16 @@ class ConversationReplyComposer:
         extracted: TattooExtractionDraft,
     ) -> str:
         """Summarize only known details in one conversational sentence."""
+        if len(extracted.projects) > 1:
+            return self._human_request_summary(extracted)
         style_tags = [
             tag for tag in extracted.style_tags if tag != "unknown"
         ]
         color_preference = extracted.color_preference
         if color_preference == "color":
-            color_preference = "full-colour"
+            color_preference = (
+                "" if "watercolor" in style_tags else "full-colour"
+            )
         if color_preference == "black-and-grey":
             style_tags = [
                 tag for tag in style_tags if tag != "black-and-grey"
@@ -551,7 +699,7 @@ class ConversationReplyComposer:
         descriptors = [
             value.strip()
             for value in (
-                extracted.size_estimate_cm,
+                extracted.size_estimate_cm or extracted.size_description,
                 color_preference,
                 " and ".join(style_tags),
             )
