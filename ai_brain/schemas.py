@@ -89,6 +89,18 @@ ConfidenceLevel = Literal["high", "medium", "low"]
 RiskLevel = Literal["low", "high"]
 MessageSource = Literal["whatsapp", "outlook", "vcita", "other"]
 VisualColorPreference = Literal["black-and-grey", "color", "unknown"]
+SizeStatus = Literal["exact", "approximate", "unknown"]
+ArtistPreferenceMode = Literal[
+    "specific",
+    "recommend",
+    "no_preference",
+    "unknown",
+]
+IntakeStatus = Literal[
+    "collecting_info",
+    "needs_staff_review",
+    "ready_for_review",
+]
 PreferredArtist = Literal[
     "",
     "Hoss",
@@ -277,6 +289,27 @@ class TattooVisionOutput(BaseModel):
     color_preference: VisualColorPreference
 
 
+class TattooProjectDetail(BaseModel):
+    """One tattoo request within an individual or group inquiry."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    person_label: str = Field(
+        default="Client",
+        max_length=80,
+        description="Person receiving this tattoo, such as Client or Girlfriend.",
+    )
+    tattoo_idea: str = Field(default="", max_length=500)
+    style_tags: list[StyleTag] = Field(default_factory=list, max_length=10)
+    placement: str = Field(default="", max_length=100)
+    size_estimate_cm: str = Field(default="", max_length=100)
+    size_description: str = Field(default="", max_length=100)
+    size_status: SizeStatus = "unknown"
+    color_preference: str = Field(default="", max_length=100)
+    tattoo_project_type: TattooProjectType = ""
+    reference_image_urls: list[str] = Field(default_factory=list, max_length=20)
+
+
 class TattooExtractionDraft(BaseModel):
     """Intermediate extraction output before routing and risk enrichment."""
 
@@ -326,6 +359,25 @@ class TattooExtractionDraft(BaseModel):
         default="",
         description="New tattoo, cover-up, continuation, or touch-up.",
     )
+    party_size: int = Field(
+        default=1,
+        ge=1,
+        le=20,
+        description="Number of people represented by this inquiry.",
+    )
+    projects: list[TattooProjectDetail] = Field(
+        default_factory=list,
+        max_length=20,
+        description="Per-person or per-tattoo details for group requests.",
+    )
+    size_description: str = Field(
+        default="",
+        max_length=100,
+        description="Natural size wording such as hand-sized or not sure.",
+    )
+    size_status: SizeStatus = "unknown"
+    artist_preference_mode: ArtistPreferenceMode = "unknown"
+    pricing_requested: bool = False
     missing_information: list[MissingInformationItem] = Field(
         default_factory=list,
         description=(
@@ -399,6 +451,18 @@ class AIExtractionOutput(BaseModel):
         default="",
         description="New tattoo, cover-up, continuation, or touch-up.",
     )
+    party_size: int = Field(default=1, ge=1, le=20)
+    projects: list[TattooProjectDetail] = Field(
+        default_factory=list,
+        max_length=20,
+    )
+    size_description: str = Field(default="", max_length=100)
+    size_status: SizeStatus = "unknown"
+    artist_preference_mode: ArtistPreferenceMode = "unknown"
+    pricing_requested: bool = False
+    intake_status: IntakeStatus = "collecting_info"
+    staff_review_required: bool = False
+    review_reasons: list[str] = Field(default_factory=list, max_length=20)
     suggested_artist: SuggestedArtist = Field(
         description="Configured artist display name or Unclear.",
     )
