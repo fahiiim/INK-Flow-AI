@@ -159,7 +159,7 @@ def _router(
 
 @pytest.mark.parametrize("record_count", range(10))
 def test_cold_start_enforcement(record_count: int) -> None:
-    """Every record count below ten forces manual high-risk handling."""
+    """Cold start blocks learning but still allows verified config routing."""
     records = _history_records(["hoss"] * record_count)
     vector_store = FakeVectorStore(records=records, matches=[])
     engine = StudioDecisionEngine(
@@ -183,9 +183,9 @@ def test_cold_start_enforcement(record_count: int) -> None:
     assert result.analysis.suggested_artist == "Unclear"
     assert result.analysis.risk_level == "high"
     assert result.analysis.ai_reasoning == expected_reasoning
-    assert routed.suggested_artist == "Unclear"
+    assert routed.suggested_artist == "Hoss"
     assert routed.risk_level == "high"
-    assert routed.ai_reasoning == expected_reasoning
+    assert "configured specialties" in routed.ai_reasoning
     assert result.artist_suggestion.artist_key is None
     assert result.suggested_next_action.action == "artist_review"
     assert result.suggested_next_action.requires_human_review is True
