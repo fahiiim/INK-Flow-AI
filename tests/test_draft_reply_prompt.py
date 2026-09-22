@@ -9,21 +9,16 @@ from ai_brain.prompts import (
 from ai_brain.schemas import Message
 
 
-def test_system_prompt_locks_validation_and_confirmation_behavior() -> None:
-    """The prompt requires validation once and forbids repeated requests."""
-    required_sentence = (
-        "Does that sound right, or would you like to change anything?"
-    )
-
-    assert required_sentence in DRAFT_REPLY_SYSTEM_PROMPT
-    assert "NEVER output a bulleted list" in DRAFT_REPLY_SYSTEM_PROMPT
+def test_system_prompt_locks_human_progressive_reply_behavior() -> None:
+    """The prompt requires natural replies and progressive questions."""
+    assert "warm, professional, and human-like" in DRAFT_REPLY_SYSTEM_PROMPT
+    assert "We have recorded the following details" in DRAFT_REPLY_SYSTEM_PROMPT
+    assert "or bulleted lists of missing info" in DRAFT_REPLY_SYSTEM_PROMPT
     assert "NEVER show a field whose value is blank" in DRAFT_REPLY_SYSTEM_PROMPT
-    assert "one natural sentence" in DRAFT_REPLY_SYSTEM_PROMPT
-    assert "ONLY the one or two most critical" in DRAFT_REPLY_SYSTEM_PROMPT
-    assert "Never send a full intake checklist" in DRAFT_REPLY_SYSTEM_PROMPT
-    assert "DO NOT repeat the summary" in DRAFT_REPLY_SYSTEM_PROMPT
-    assert "DO NOT ask for validation again" in DRAFT_REPLY_SYSTEM_PROMPT
-    assert "premium tattoo studio" in DRAFT_REPLY_SYSTEM_PROMPT
+    assert "multi_entity_detected is True" in DRAFT_REPLY_SYSTEM_PROMPT
+    assert "provide a custom estimate shortly" in DRAFT_REPLY_SYSTEM_PROMPT
+    assert "ONLY the 1 or 2 most critical items" in DRAFT_REPLY_SYSTEM_PROMPT
+    assert "already confirmed details" in DRAFT_REPLY_SYSTEM_PROMPT
 
 
 def test_human_prompt_includes_details_and_recent_confirmation() -> None:
