@@ -66,6 +66,15 @@ _MULTIPLE_TATTOOS_PATTERN = re.compile(
     r"\b(?:multiple|several)\s+tattoos?\b",
     flags=re.IGNORECASE,
 )
+_MATCHING_EXISTING_TATTOO_PATTERN = re.compile(
+    r"\bmy\s+(?P<relation>girlfriend|boyfriend|partner|wife|husband|"
+    r"friend|sister|brother)(?:'s|\s+has\s+(?:a\s+)?)\s*tattoo\b"
+    r".{0,120}\b(?:i\s+)?(?:want\s+to\s+)?match\b|"
+    r"\b(?:i\s+)?(?:want\s+to\s+)?match\b.{0,120}"
+    r"\bmy\s+(?P<reverse_relation>girlfriend|boyfriend|partner|wife|"
+    r"husband|friend|sister|brother)(?:'s)?\s+tattoo\b",
+    flags=re.IGNORECASE,
+)
 _GENERIC_TATTOO_IDEA_PATTERN = re.compile(
     r"^(?:(?:i|we|the client)\s+)?"
     r"(?:(?:want|wants|need|needs|would like|request|requests|"
@@ -1141,6 +1150,8 @@ class TattooTextExtractor:
             return True
         if _MULTIPLE_TATTOOS_PATTERN.search(conversation):
             return True
+        if _MATCHING_EXISTING_TATTOO_PATTERN.search(conversation):
+            return True
 
         for record in self._state_records(existing_db_state):
             stored_flag = record.get("multi_entity_detected")
@@ -1187,6 +1198,19 @@ class TattooTextExtractor:
             details.append(f"{project_count} tattoo projects")
         elif _MULTIPLE_TATTOOS_PATTERN.search(conversation):
             details.append("multiple tattoos")
+
+        matching_tattoo = _MATCHING_EXISTING_TATTOO_PATTERN.search(
+            conversation
+        )
+        if matching_tattoo:
+            relation = (
+                matching_tattoo.group("relation")
+                or matching_tattoo.group("reverse_relation")
+                or "another person's"
+            )
+            details.append(
+                f"matching the client's {relation}'s existing tattoo"
+            )
 
         named_colors = sorted(
             {
@@ -1779,8 +1803,18 @@ class TattooTextExtractor:
         """Return natural size wording when an exact measurement is unavailable."""
         normalized = " ".join(text.casefold().split())
         descriptions = (
-            (r"\b(?:hand[- ]?sized?|size\s+of\s+(?:a|my|your)\s+hand)\b", "hand-sized"),
-            (r"\b(?:palm[- ]?sized?|size\s+of\s+(?:a|my|your)\s+palm)\b", "palm-sized"),
+            (
+                r"\b(?:hand[- ]?sized?|size\s+of\s+(?:a|my|your)\s+hand|"
+                r"fit(?:s|ting)?\s+(?:on|across)\s+"
+                r"(?:a|my|the|your)\s+hand)\b",
+                "hand-sized",
+            ),
+            (
+                r"\b(?:palm[- ]?sized?|size\s+of\s+(?:a|my|your)\s+palm|"
+                r"fit(?:s|ting)?\s+(?:on|across)\s+"
+                r"(?:a|my|the|your)\s+palm)\b",
+                "palm-sized",
+            ),
             (r"\bcredit[- ]?card[- ]?sized?\b", "credit-card-sized"),
             (r"\bcoin[- ]?sized?\b", "coin-sized"),
             (r"\bmatchbox[- ]?sized?\b", "matchbox-sized"),
@@ -2193,6 +2227,8 @@ class TattooTextExtractor:
             (
                 r"\b(?:(?:no|without)\s+colou?r|"
                 r"black[- ]and[- ]gr[ae]y|black\s*&\s*gr[ae]y|"
+                r"gr[ae]y\s*(?:and|&)?\s*black"
+                r"(?:\s+colou?r(?:\s+combination)?)?|"
                 r"black\s+ink(?:\s+only)?|black\s+only)\b",
                 "black-and-grey",
             ),

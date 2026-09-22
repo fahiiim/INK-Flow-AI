@@ -263,7 +263,7 @@ def test_real_email_thread_preserves_concept_size_color_and_placement() -> None:
     assert "tattoo idea" not in second.missing_information
     assert "size in cm" not in second.missing_information
     assert "tattoo idea or background story" not in second_reply.casefold()
-    assert "custom estimate" not in second_reply
+    assert "updated design details" in second_reply
 
     third, third_reply = process("It would be in black and gray.")
     assert third.tattoo_idea == "Skeleton art"
@@ -312,3 +312,76 @@ def test_saved_project_reference_images_remain_fulfilled() -> None:
     )
 
     assert "reference images" not in extracted.missing_information
+
+
+def test_matching_existing_tattoo_email_gets_a_specific_reply() -> None:
+    """A partner's existing tattoo and hand-fit sizing are understood."""
+    extractor = _extractor()
+    router = TattooRouter(llm=cast(ChatOpenAI, FailingLLM()))
+    state: dict[str, Any] = {
+        "lead": {"name": "Fahim Sarker", "source": "outlook"},
+    }
+    first_message = (
+        "Hello, I want a tattoo on my hand. I've attached the reference "
+        "image. How much will it cost?"
+    )
+    first = extractor.extract(
+        current_message=first_message,
+        style_tags=["unknown"],
+        new_image_urls=["https://example.com/reference.png"],
+        existing_db_state=state,
+    )
+    first_routed = router.route(
+        extracted=first,
+        current_message=first_message,
+        existing_db_state=state,
+        message_source="outlook",
+    )
+    history = [
+        Message(role="user", content=first_message),
+        Message(role="assistant", content=first_routed.draft_reply),
+    ]
+    state["intake"] = first_routed.model_dump()
+    second_message = (
+        "I want it in a watercolor style. I don't know the exact size; it "
+        "will fit on my hand. My girlfriend has a tattoo on her hand and I "
+        "want to match it in a gray black color combination. It will be a "
+        "skeleton on my hand."
+    )
+
+    second = extractor.extract(
+        current_message=second_message,
+        style_tags=["unknown"],
+        existing_db_state=state,
+        recent_chat_history=history,
+    )
+    routed = router.route(
+        extracted=second,
+        current_message=second_message,
+        recent_chat_history=history,
+        existing_db_state=state,
+        message_source="outlook",
+    )
+
+    assert second.tattoo_idea == "Skeleton"
+    assert second.style_tags == ["watercolor"]
+    assert second.placement == "hand"
+    assert second.size_estimate_cm == "10-15 cm"
+    assert second.size_description == "hand-sized"
+    assert second.size_status == "approximate"
+    assert second.color_preference == "black-and-grey"
+    assert second.party_size == 1
+    assert second.multi_entity_detected is True
+    assert "girlfriend's existing tattoo" in second.complexity_notes
+    assert "size in cm" not in second.missing_information
+    assert "reference images" not in second.missing_information
+    assert routed.risk_level == "low"
+    assert routed.review_reasons == ["complex_routing_required"]
+    assert routed.auto_reply_allowed is True
+    assert routed.telegram_review_required is True
+    assert "10-15 cm black-and-grey watercolor Skeleton" in (
+        routed.draft_reply
+    )
+    assert "match an existing tattoo" in routed.draft_reply
+    assert "10 to 15 cm sound right?" in routed.draft_reply
+    assert "updated design details" in routed.draft_reply

@@ -193,6 +193,7 @@ class ConversationReplyComposer:
         pricing_acknowledgement_needed = (
             pricing_requested
             and self._pricing_acknowledgement_needed(
+                extracted,
                 current_message,
                 history,
             )
@@ -227,14 +228,18 @@ class ConversationReplyComposer:
             missing_information=extracted.missing_information,
             history=history,
         )
+        questions = self._prepend_size_confirmation(
+            extracted=extracted,
+            questions=questions,
+            history=history,
+        )
         if questions:
             reply_parts = [acknowledgement]
             if complexity_notice:
                 reply_parts.append(complexity_notice)
             if pricing_acknowledgement_needed:
                 reply_parts.append(
-                    "The studio can confirm the price after reviewing the "
-                    "remaining tattoo details."
+                    self._pricing_message(extracted, history)
                 )
             reply = " ".join([*reply_parts, *questions])
             return self._avoid_exact_repeat(reply, history)
@@ -275,6 +280,7 @@ class ConversationReplyComposer:
         pricing_acknowledgement_needed = (
             pricing_requested
             and self._pricing_acknowledgement_needed(
+                extracted,
                 current_message,
                 history,
             )
@@ -321,14 +327,16 @@ class ConversationReplyComposer:
         complexity_notice = self._complexity_notice(extracted)
         if complexity_notice:
             reply_parts.append(complexity_notice)
+        size_confirmation = self._approximate_size_question(
+            extracted,
+            history,
+        )
         reply_parts.append(
-            "Does that sound right, or would you like to change anything?"
+            size_confirmation
+            or "Does that sound right, or would you like to change anything?"
         )
         if pricing_acknowledgement_needed:
-            reply_parts.append(
-                "The studio can confirm the price after reviewing the "
-                "remaining tattoo details."
-            )
+            reply_parts.append(self._pricing_message(extracted, history))
         reply_parts.extend(questions)
         return self._avoid_exact_repeat(
             " ".join(reply_parts),
@@ -356,6 +364,7 @@ class ConversationReplyComposer:
         pricing_acknowledgement_needed = (
             pricing_requested
             and self._pricing_acknowledgement_needed(
+                extracted,
                 current_message,
                 history,
             )
@@ -414,7 +423,12 @@ class ConversationReplyComposer:
             )
 
         if pricing_acknowledgement_needed:
-            if "reference images" in missing_information:
+            if self._pricing_previously_acknowledged(history):
+                sections.append(
+                    "These updated design details will help the artist "
+                    "prepare your custom estimate."
+                )
+            elif "reference images" in missing_information:
                 sections.append(
                     "Once we have the remaining design details and any "
                     "reference images, the artist can provide a custom "
@@ -430,6 +444,11 @@ class ConversationReplyComposer:
             questions = self._select_questions(
                 missing_information=missing_information,
                 history=list(history),
+            )
+            questions = self._prepend_size_confirmation(
+                extracted=extracted,
+                questions=questions,
+                history=history,
             )
             if questions:
                 intro = (
@@ -537,23 +556,105 @@ class ConversationReplyComposer:
         """Return a natural staff-review notice for complex requests."""
         if not extracted.multi_entity_detected:
             return ""
+        if "existing tattoo" in extracted.complexity_notes.casefold():
+            return (
+                "Since this design needs to match an existing tattoo, I've "
+                "flagged it for a personal review by our studio team."
+            )
         return (
             "Because this request includes multiple tattoo details, I've "
             "flagged it for a personal review by our studio team."
         )
 
+    def _prepend_size_confirmation(
+        self,
+        extracted: TattooExtractionDraft,
+        questions: list[str],
+        history: Sequence[Message],
+    ) -> list[str]:
+        """Ask once for confirmation of a conservatively inferred size."""
+        size_question = self._approximate_size_question(extracted, history)
+        if not size_question:
+            return questions
+        return [size_question, *questions[:1]]
+
+    def _approximate_size_question(
+        self,
+        extracted: TattooExtractionDraft,
+        history: Sequence[Message],
+    ) -> str:
+        """Build one guiding question for an inferred centimetre range."""
+        estimate = extracted.size_estimate_cm.strip()
+        if (
+            extracted.size_status != "approximate"
+            or not extracted.size_description
+            or extracted.size_description == "not sure"
+            or not estimate
+        ):
+            return ""
+        if any(
+            message.role == "assistant"
+            and estimate.casefold() in message.content.casefold()
+            for message in history
+        ):
+            return ""
+        natural_estimate = re.sub(r"(?<=\d)-(?=\d)", " to ", estimate)
+        return (
+            "Just to confirm, does an estimated size of around "
+            f"{natural_estimate} sound right?"
+        )
+
     def _pricing_acknowledgement_needed(
         self,
+        extracted: TattooExtractionDraft,
         current_message: str,
         history: Sequence[Message],
     ) -> bool:
-        """Avoid repeating a price acknowledgement on every follow-up."""
+        """Acknowledge price questions and one material design update."""
         if _PRICING_PATTERN.search(current_message.casefold()):
             return True
+        if not self._pricing_previously_acknowledged(history):
+            return True
+        needs_contextual_update = (
+            extracted.multi_entity_detected
+            or bool(extracted.size_description)
+        )
+        if not needs_contextual_update:
+            return False
         return not any(
+            message.role == "assistant"
+            and "updated design details" in message.content.casefold()
+            for message in history
+        )
+
+    def _pricing_previously_acknowledged(
+        self,
+        history: Sequence[Message],
+    ) -> bool:
+        """Return whether an earlier assistant response addressed pricing."""
+        return any(
             message.role == "assistant"
             and _PRICING_PATTERN.search(message.content.casefold())
             for message in history
+        )
+
+    def _pricing_message(
+        self,
+        extracted: TattooExtractionDraft,
+        history: Sequence[Message],
+    ) -> str:
+        """Return an initial or contextual price acknowledgement."""
+        if self._pricing_previously_acknowledged(history) and (
+            extracted.multi_entity_detected
+            or bool(extracted.size_description)
+        ):
+            return (
+                "These updated design details will help the studio prepare "
+                "your custom estimate."
+            )
+        return (
+            "The studio can confirm the price after reviewing the remaining "
+            "tattoo details."
         )
 
     def _project_phrase(self, project: object, index: int) -> str:
