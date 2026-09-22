@@ -169,6 +169,8 @@ class TattooRouter:
             availability=extracted.availability,
             tattoo_project_type=extracted.tattoo_project_type,
             party_size=extracted.party_size,
+            multi_entity_detected=extracted.multi_entity_detected,
+            complexity_notes=extracted.complexity_notes,
             projects=extracted.projects,
             size_description=extracted.size_description,
             size_status=extracted.size_status,
@@ -231,6 +233,10 @@ class TattooRouter:
                     "availability": extracted.availability,
                     "tattoo_project_type": extracted.tattoo_project_type,
                     "party_size": extracted.party_size,
+                    "multi_entity_detected": (
+                        extracted.multi_entity_detected
+                    ),
+                    "complexity_notes": extracted.complexity_notes,
                     "projects": [
                         project.model_dump(mode="json")
                         for project in extracted.projects
@@ -635,6 +641,8 @@ class TattooRouter:
     ) -> list[str]:
         """Identify normal inquiries that need staff help before completion."""
         reasons: list[str] = []
+        if extracted.multi_entity_detected:
+            reasons.append("complex_routing_required")
         if extracted.party_size > 1 or len(extracted.projects) > 1:
             reasons.append("multiple_tattoo_projects")
         if extracted.size_description == "not sure":
