@@ -48,6 +48,24 @@ _PRICING_PATTERN = re.compile(
     r"\b(?:price|pricing|cost|quote|how much|budget)\b",
     flags=re.IGNORECASE,
 )
+_COMPLEX_ROUTING_NOTE = "Complex routing required"
+_QUALITATIVE_SIZE_RANGES: dict[str, str] = {
+    "hand-sized": "10-15 cm",
+    "palm-sized": "8-10 cm",
+    "credit-card-sized": "8-9 cm",
+    "coin-sized": "2-3 cm",
+    "matchbox-sized": "5-6 cm",
+}
+_NAMED_COLOR_PATTERN = re.compile(
+    r"\b(?:red|blue|green|yellow|purple|orange|pink|black|white)\b",
+    flags=re.IGNORECASE,
+)
+_MULTIPLE_TATTOOS_PATTERN = re.compile(
+    r"\b(?:two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\s+"
+    r"(?:different\s+|matching\s+)?tattoos?\b|"
+    r"\b(?:multiple|several)\s+tattoos?\b",
+    flags=re.IGNORECASE,
+)
 _GENERIC_TATTOO_IDEA_PATTERN = re.compile(
     r"^(?:(?:i|we|the client)\s+)?"
     r"(?:(?:want|wants|need|needs|would like|request|requests|"
@@ -386,7 +404,12 @@ class _ExtractionSubset(BaseModel):
         description="New tattoo, cover-up, continuation, or touch-up.",
     )
     party_size: int = Field(default=1, ge=1, le=20)
-    projects: list[TattooProjectDetail] = Field(default_factory=list, max_length=20)
+    multi_entity_detected: bool = Field(default=False)
+    complexity_notes: str = Field(default="")
+    projects: list[TattooProjectDetail] = Field(
+        default_factory=list,
+        max_length=20,
+    )
     size_description: str = Field(default="", max_length=100)
     artist_preference_mode: ArtistPreferenceMode = "unknown"
     pricing_requested: bool = False
@@ -477,7 +500,10 @@ class TattooTextExtractor:
                 tattoo_idea=resolved_output.tattoo_idea,
                 style_tags=normalized_tags,
                 placement=resolved_output.placement,
-                size_estimate_cm=resolved_output.size_estimate_cm,
+                size_estimate_cm=self._infer_size(
+                    size_estimate_cm=resolved_output.size_estimate_cm,
+                    size_description=resolved_output.size_description,
+                ),
                 color_preference=resolved_output.color_preference,
                 date=resolved_output.date,
                 time=resolved_output.time,
@@ -486,6 +512,10 @@ class TattooTextExtractor:
                 availability=resolved_output.availability,
                 tattoo_project_type=resolved_output.tattoo_project_type,
                 party_size=resolved_output.party_size,
+                multi_entity_detected=(
+                    resolved_output.multi_entity_detected
+                ),
+                complexity_notes=resolved_output.complexity_notes,
                 projects=self._resolve_projects(
                     llm_projects=resolved_output.projects,
                     current_message=normalized_message,
@@ -630,6 +660,8 @@ class TattooTextExtractor:
             availability=llm_output.availability,
             tattoo_project_type=llm_output.tattoo_project_type,
             party_size=llm_output.party_size,
+            multi_entity_detected=llm_output.multi_entity_detected,
+            complexity_notes=llm_output.complexity_notes,
             projects=llm_output.projects,
             size_description=llm_output.size_description,
             artist_preference_mode=llm_output.artist_preference_mode,
@@ -646,10 +678,14 @@ class TattooTextExtractor:
         recent_chat_history: list[Message],
         style_tags: list[StyleTag],
     ) -> list[MissingInformationItem]:
-        """Reconcile missing fields against every supplied context source."""
+        """Reconcile client-actionable gaps across every context source."""
         missing: set[str] = {
             item for item in llm_output.missing_information if item in _MISSING_SET
         }
+        inferred_size = self._infer_size(
+            size_estimate_cm=llm_output.size_estimate_cm,
+            size_description=llm_output.size_description,
+        )
 
         conversation_text = self._user_conversation_text(
             current_message=current_message,
@@ -662,10 +698,8 @@ class TattooTextExtractor:
             "tattoo idea": self._is_missing_tattoo_idea(
                 llm_output.tattoo_idea
             ),
-            "size in cm": (
-                self._is_blank(llm_output.size_estimate_cm)
-                and self._is_blank(llm_output.size_description)
-            ),
+            "size in cm": self._is_blank(inferred_size)
+            and self._is_blank(llm_output.size_description),
             "placement": self._is_blank(llm_output.placement),
             "tattoo style": not any(
                 tag in _STYLE_TAGS_THAT_RESOLVE_PREFERENCE
@@ -761,7 +795,10 @@ class TattooTextExtractor:
             tattoo_idea=resolved_fallback.tattoo_idea,
             style_tags=style_tags,
             placement=resolved_fallback.placement,
-            size_estimate_cm=resolved_fallback.size_estimate_cm,
+            size_estimate_cm=self._infer_size(
+                size_estimate_cm=resolved_fallback.size_estimate_cm,
+                size_description=resolved_fallback.size_description,
+            ),
             color_preference=resolved_fallback.color_preference,
             date=resolved_fallback.date,
             time=resolved_fallback.time,
@@ -770,6 +807,10 @@ class TattooTextExtractor:
             availability=resolved_fallback.availability,
             tattoo_project_type=resolved_fallback.tattoo_project_type,
             party_size=resolved_fallback.party_size,
+            multi_entity_detected=(
+                resolved_fallback.multi_entity_detected
+            ),
+            complexity_notes=resolved_fallback.complexity_notes,
             projects=self._resolve_projects(
                 llm_projects=resolved_fallback.projects,
                 current_message=current_message,
@@ -799,6 +840,43 @@ class TattooTextExtractor:
         existing_db_state: dict[str, Any],
     ) -> _ExtractionSubset:
         """Resolve fields using current, model, history, then database order."""
+        party_size = self._resolve_party_size(
+            llm_value=llm_output.party_size,
+            current_message=current_message,
+            recent_chat_history=recent_chat_history,
+            existing_db_state=existing_db_state,
+        )
+        multi_entity_detected = self._resolve_multi_entity_detected(
+            llm_value=llm_output.multi_entity_detected,
+            llm_complexity_notes=llm_output.complexity_notes,
+            party_size=party_size,
+            llm_projects=llm_output.projects,
+            current_message=current_message,
+            recent_chat_history=recent_chat_history,
+            existing_db_state=existing_db_state,
+        )
+        complexity_notes = self._resolve_complexity_notes(
+            llm_value=llm_output.complexity_notes,
+            multi_entity_detected=multi_entity_detected,
+            party_size=party_size,
+            project_count=len(llm_output.projects),
+            current_message=current_message,
+            recent_chat_history=recent_chat_history,
+            existing_db_state=existing_db_state,
+        )
+        size_description = self._resolve_size_description(
+            llm_value=llm_output.size_description,
+            current_message=current_message,
+            recent_chat_history=recent_chat_history,
+            existing_db_state=existing_db_state,
+        )
+        size_estimate_cm = self._resolve_size_estimate(
+            llm_value=llm_output.size_estimate_cm,
+            size_description=size_description,
+            current_message=current_message,
+            recent_chat_history=recent_chat_history,
+            existing_db_state=existing_db_state,
+        )
         return _ExtractionSubset(
             client_name=self._resolve_client_name(
                 llm_value=llm_output.client_name,
@@ -821,15 +899,7 @@ class TattooTextExtractor:
                 value_extractor=self._extract_placement_from_text,
                 field_terms=_PLACEMENT_FIELD_TERMS,
             ),
-            size_estimate_cm=self._resolve_context_field(
-                llm_value=llm_output.size_estimate_cm,
-                current_message=current_message,
-                recent_chat_history=recent_chat_history,
-                existing_db_state=existing_db_state,
-                state_keys=("size_estimate_cm", "size_cm", "size"),
-                value_extractor=self._extract_size_from_text,
-                field_terms=_SIZE_FIELD_TERMS,
-            ),
+            size_estimate_cm=size_estimate_cm,
             color_preference=self._resolve_context_field(
                 llm_value=llm_output.color_preference,
                 current_message=current_message,
@@ -946,19 +1016,11 @@ class TattooTextExtractor:
                     field_terms=_PROJECT_TYPE_FIELD_TERMS,
                 )
             ),
-            party_size=self._resolve_party_size(
-                llm_value=llm_output.party_size,
-                current_message=current_message,
-                recent_chat_history=recent_chat_history,
-                existing_db_state=existing_db_state,
-            ),
+            party_size=party_size,
+            multi_entity_detected=multi_entity_detected,
+            complexity_notes=complexity_notes,
             projects=llm_output.projects,
-            size_description=self._resolve_size_description(
-                llm_value=llm_output.size_description,
-                current_message=current_message,
-                recent_chat_history=recent_chat_history,
-                existing_db_state=existing_db_state,
-            ),
+            size_description=size_description,
             artist_preference_mode=self._resolve_artist_preference_mode(
                 llm_value=llm_output.artist_preference_mode,
                 preferred_artist=self._normalize_preferred_artist(
@@ -1048,6 +1110,137 @@ class TattooTextExtractor:
                     if 1 <= parsed <= 20:
                         return parsed
         return min(max(llm_value, 1), 20)
+
+    def _resolve_multi_entity_detected(
+        self,
+        llm_value: bool,
+        llm_complexity_notes: str,
+        party_size: int,
+        llm_projects: list[TattooProjectDetail],
+        current_message: str,
+        recent_chat_history: list[Message],
+        existing_db_state: dict[str, Any],
+    ) -> bool:
+        """Detect and remember requests containing multiple routing entities."""
+        if (
+            llm_value
+            or not self._is_blank(llm_complexity_notes)
+            or party_size > 1
+            or len(llm_projects) > 1
+        ):
+            return True
+
+        conversation = self._user_conversation_text(
+            current_message=current_message,
+            recent_chat_history=recent_chat_history,
+        )
+        named_colors = {
+            match.group(0).casefold()
+            for match in _NAMED_COLOR_PATTERN.finditer(conversation)
+        }
+        if len(named_colors) > 1:
+            return True
+        if _MULTIPLE_TATTOOS_PATTERN.search(conversation):
+            return True
+
+        for record in self._state_records(existing_db_state):
+            stored_flag = record.get("multi_entity_detected")
+            if stored_flag is True:
+                return True
+            if isinstance(stored_flag, str):
+                if stored_flag.strip().casefold() == "true":
+                    return True
+            stored_projects = record.get("projects")
+            if isinstance(stored_projects, list) and len(stored_projects) > 1:
+                return True
+            stored_note = record.get("complexity_notes")
+            if isinstance(stored_note, str) and stored_note.strip():
+                return True
+        return False
+
+    def _resolve_complexity_notes(
+        self,
+        llm_value: str,
+        multi_entity_detected: bool,
+        party_size: int,
+        project_count: int,
+        current_message: str,
+        recent_chat_history: list[Message],
+        existing_db_state: dict[str, Any],
+    ) -> str:
+        """Build concise internal notes for multi-entity staff routing."""
+        stored_note = self._get_state_text(
+            existing_db_state,
+            ("complexity_notes",),
+        )
+        base_note = " ".join((llm_value or stored_note).split())
+        if not multi_entity_detected:
+            return base_note
+
+        conversation = self._user_conversation_text(
+            current_message=current_message,
+            recent_chat_history=recent_chat_history,
+        )
+        details: list[str] = []
+        if party_size > 1:
+            details.append(f"{party_size} people")
+        if project_count > 1:
+            details.append(f"{project_count} tattoo projects")
+        elif _MULTIPLE_TATTOOS_PATTERN.search(conversation):
+            details.append("multiple tattoos")
+
+        named_colors = sorted(
+            {
+                match.group(0).casefold()
+                for match in _NAMED_COLOR_PATTERN.finditer(conversation)
+            }
+        )
+        if len(named_colors) > 1:
+            details.append(f"multiple colors: {', '.join(named_colors)}")
+
+        note_parts: list[str] = []
+        if base_note:
+            cleaned_note = re.sub(
+                rf"^{re.escape(_COMPLEX_ROUTING_NOTE)}\s*[:;.-]?\s*",
+                "",
+                base_note,
+                flags=re.IGNORECASE,
+            ).rstrip(". ")
+            if cleaned_note:
+                note_parts.append(cleaned_note)
+        for detail in details:
+            if detail.casefold() not in base_note.casefold():
+                note_parts.append(detail)
+        if not note_parts:
+            return _COMPLEX_ROUTING_NOTE
+        return f"{_COMPLEX_ROUTING_NOTE}: {'; '.join(note_parts)}"
+
+    def _resolve_size_estimate(
+        self,
+        llm_value: str,
+        size_description: str,
+        current_message: str,
+        recent_chat_history: list[Message],
+        existing_db_state: dict[str, Any],
+    ) -> str:
+        """Resolve exact sizing while honoring a newer qualitative answer."""
+        resolved = self._resolve_context_field(
+            llm_value=llm_value,
+            current_message=current_message,
+            recent_chat_history=recent_chat_history,
+            existing_db_state=existing_db_state,
+            state_keys=("size_estimate_cm", "size_cm", "size"),
+            value_extractor=self._extract_size_from_text,
+            field_terms=_SIZE_FIELD_TERMS,
+        )
+        current_description = self._extract_size_description(current_message)
+        if current_description:
+            return self._extract_size_from_text(current_message)
+        if size_description == "not sure" and self._is_uncertain_answer(
+            current_message
+        ):
+            return ""
+        return resolved
 
     def _resolve_size_description(
         self,
@@ -1573,6 +1766,17 @@ class TattooTextExtractor:
             return "not sure"
         return ""
 
+    def _infer_size(
+        self,
+        size_estimate_cm: str,
+        size_description: str,
+    ) -> str:
+        """Infer a conservative centimetre range from qualitative sizing."""
+        if not self._is_blank(size_estimate_cm):
+            return size_estimate_cm
+        normalized = " ".join(size_description.casefold().split())
+        return _QUALITATIVE_SIZE_RANGES.get(normalized, "")
+
     def _is_uncertain_answer(self, text: str) -> bool:
         """Detect an explicit statement that the client does not know."""
         normalized = " ".join(text.casefold().split())
@@ -1591,16 +1795,25 @@ class TattooTextExtractor:
         current_message: str,
     ) -> str:
         """Classify whether a supplied size is exact, approximate, or unknown."""
+        if size_description:
+            if size_description == "not sure":
+                return "unknown"
+            return "approximate"
         if size_estimate_cm:
-            if re.search(
+            is_range = bool(
+                re.search(
+                    r"\d(?:\.\d+)?\s*(?:-|to)\s*\d",
+                    size_estimate_cm,
+                    flags=re.IGNORECASE,
+                )
+            )
+            if is_range or re.search(
                 r"\b(?:about|around|approximately|approx|roughly|maybe)\b",
                 current_message,
                 flags=re.IGNORECASE,
             ):
                 return "approximate"
             return "exact"
-        if size_description and size_description != "not sure":
-            return "approximate"
         return "unknown"
 
     def _extract_artist_preference_mode(
@@ -1658,10 +1871,9 @@ class TattooTextExtractor:
             return []
 
         person_colors = self._extract_person_colors(current_message)
-        size_status = self._size_status(
-            resolved_output.size_estimate_cm,
-            resolved_output.size_description,
-            current_message,
+        inferred_size = self._infer_size(
+            size_estimate_cm=resolved_output.size_estimate_cm,
+            size_description=resolved_output.size_description,
         )
         resolved: list[TattooProjectDetail] = []
         for index, project in enumerate(projects):
@@ -1671,6 +1883,18 @@ class TattooTextExtractor:
             color = person_colors.get(label.casefold())
             if not color:
                 color = project.color_preference or resolved_output.color_preference
+            project_size_description = (
+                project.size_description or resolved_output.size_description
+            )
+            project_size = self._infer_size(
+                size_estimate_cm=project.size_estimate_cm or inferred_size,
+                size_description=project_size_description,
+            )
+            project_size_status = self._size_status(
+                size_estimate_cm=project_size,
+                size_description=project_size_description,
+                current_message=current_message,
+            )
             resolved.append(
                 project.model_copy(
                     update={
@@ -1682,18 +1906,12 @@ class TattooTextExtractor:
                         "placement": (
                             project.placement or resolved_output.placement
                         ),
-                        "size_estimate_cm": (
-                            project.size_estimate_cm
-                            or resolved_output.size_estimate_cm
-                        ),
-                        "size_description": (
-                            project.size_description
-                            or resolved_output.size_description
-                        ),
+                        "size_estimate_cm": project_size,
+                        "size_description": project_size_description,
                         "size_status": (
                             project.size_status
                             if project.size_status != "unknown"
-                            else size_status
+                            else project_size_status
                         ),
                         "color_preference": color,
                         "tattoo_project_type": (
