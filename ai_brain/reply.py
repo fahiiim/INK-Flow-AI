@@ -21,9 +21,21 @@ _GREETING_PATTERN = re.compile(
 )
 _CORRECTION_TERMS = (
     "i said",
+    "already said",
+    "just said",
     "actually",
     "i meant",
     "i told you",
+    "mentioned earlier",
+    "as i mentioned",
+)
+_REPEATED_DETAIL_TERMS = (
+    "i said",
+    "already said",
+    "just said",
+    "i told you",
+    "mentioned earlier",
+    "as i mentioned",
 )
 _CONFIRMATION_PATTERN = re.compile(
     r"\b(?:yes|correct|confirmed|all good|looks good|that's right|"
@@ -45,7 +57,7 @@ _SCHEDULE_TERMS = (
     " pm",
 )
 _PRICING_PATTERN = re.compile(
-    r"\b(?:price|pricing|cost|quote|how much|budget)\b"
+    r"\b(?:price|pricing|cost|quote|estimate|how much|budget)\b"
 )
 _POSSIBLE_PATTERN = re.compile(
     r"\b(?:is|would)\b.{0,30}\bpossible\b",
@@ -178,6 +190,13 @@ class ConversationReplyComposer:
             extracted.pricing_requested
             or pricing_was_requested(current_message, history)
         )
+        pricing_acknowledgement_needed = (
+            pricing_requested
+            and self._pricing_acknowledgement_needed(
+                current_message,
+                history,
+            )
+        )
         manual_review = risk_level == "high" and requires_manual_review(
             current_message,
             history,
@@ -212,7 +231,7 @@ class ConversationReplyComposer:
             reply_parts = [acknowledgement]
             if complexity_notice:
                 reply_parts.append(complexity_notice)
-            if pricing_requested:
+            if pricing_acknowledgement_needed:
                 reply_parts.append(
                     "The studio can confirm the price after reviewing the "
                     "remaining tattoo details."
@@ -252,6 +271,13 @@ class ConversationReplyComposer:
         pricing_requested = (
             extracted.pricing_requested
             or pricing_was_requested(current_message, history)
+        )
+        pricing_acknowledgement_needed = (
+            pricing_requested
+            and self._pricing_acknowledgement_needed(
+                current_message,
+                history,
+            )
         )
         if risk_level == "high":
             return self.compose(
@@ -298,7 +324,7 @@ class ConversationReplyComposer:
         reply_parts.append(
             "Does that sound right, or would you like to change anything?"
         )
-        if pricing_requested:
+        if pricing_acknowledgement_needed:
             reply_parts.append(
                 "The studio can confirm the price after reviewing the "
                 "remaining tattoo details."
@@ -327,9 +353,20 @@ class ConversationReplyComposer:
             extracted.pricing_requested
             or pricing_was_requested(current_message, history)
         )
+        pricing_acknowledgement_needed = (
+            pricing_requested
+            and self._pricing_acknowledgement_needed(
+                current_message,
+                history,
+            )
+        )
         missing_information = list(extracted.missing_information)
         correction = any(
             term in current_message.casefold() for term in _CORRECTION_TERMS
+        )
+        repeated_detail = any(
+            term in current_message.casefold()
+            for term in _REPEATED_DETAIL_TERMS
         )
         sections = [
             self._outlook_salutation(
@@ -338,8 +375,13 @@ class ConversationReplyComposer:
             ),
             (
                 (
-                    "Thank you for clarifying - I have that noted correctly "
-                    "now."
+                    (
+                        "You're right - sorry for asking again. I have kept "
+                        "the details you already provided."
+                        if repeated_detail
+                        else "Thank you for clarifying - I have that noted "
+                        "correctly now."
+                    )
                     if correction
                     else "Thank you for the additional details."
                 )
@@ -371,11 +413,18 @@ class ConversationReplyComposer:
                 "strongest match for your request."
             )
 
-        if pricing_requested:
-            sections.append(
-                "We can confirm the price after reviewing the remaining "
-                "design details and any reference images."
-            )
+        if pricing_acknowledgement_needed:
+            if "reference images" in missing_information:
+                sections.append(
+                    "Once we have the remaining design details and any "
+                    "reference images, the artist can provide a custom "
+                    "estimate."
+                )
+            else:
+                sections.append(
+                    "The artist will review the design and provide a custom "
+                    "estimate."
+                )
 
         if missing_information:
             questions = self._select_questions(
@@ -491,6 +540,20 @@ class ConversationReplyComposer:
         return (
             "Because this request includes multiple tattoo details, I've "
             "flagged it for a personal review by our studio team."
+        )
+
+    def _pricing_acknowledgement_needed(
+        self,
+        current_message: str,
+        history: Sequence[Message],
+    ) -> bool:
+        """Avoid repeating a price acknowledgement on every follow-up."""
+        if _PRICING_PATTERN.search(current_message.casefold()):
+            return True
+        return not any(
+            message.role == "assistant"
+            and _PRICING_PATTERN.search(message.content.casefold())
+            for message in history
         )
 
     def _project_phrase(self, project: object, index: int) -> str:
@@ -771,8 +834,13 @@ class ConversationReplyComposer:
     ) -> str:
         """Acknowledge corrections and newly supplied scheduling details."""
         normalized = current_message.casefold()
+        if any(term in normalized for term in _REPEATED_DETAIL_TERMS):
+            return (
+                "You're right - sorry for asking again. I've kept the "
+                "details you already provided."
+            )
         if any(term in normalized for term in _CORRECTION_TERMS):
-            return "You're right - I've noted that now."
+            return "Thanks for clarifying - I've updated that."
         if any(term in normalized for term in _SCHEDULE_TERMS):
             return "Got it - I've noted the timing."
 

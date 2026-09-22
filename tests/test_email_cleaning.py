@@ -213,7 +213,7 @@ def test_calligraphy_style_without_wording_keeps_tattoo_idea_missing() -> None:
         existing_db_state={"lead": {"name": "Fahim Sarker"}},
         current_message=message,
     )
-    assert "confirm the price after reviewing the remaining design details" in reply
+    assert "the artist can provide a custom estimate" in reply
     assert "What is your tattoo idea or background story?" in reply
     assert "online appointment or a studio visit" not in reply
 
@@ -285,7 +285,7 @@ def test_real_email_answers_normalize_inches_and_black_and_grey() -> None:
     )
     assert "Thank you for the additional details" in reply
     assert "We still need the following information" not in reply
-    assert "confirm the price after reviewing the remaining design details" in reply
+    assert "custom estimate" not in reply
     assert "12.7 cm black-and-grey calligraphy tattoo" in reply
     assert "What size would you prefer" not in reply
 
@@ -454,6 +454,6 @@ def test_calligraphic_wording_conversation_preserves_the_complete_quote() -> Non
     assert routed.risk_level == "high"
     assert routed.auto_reply_allowed is False
     assert routed.draft_reply.startswith("Dear Fahim,")
-    assert "Thank you for clarifying" in routed.draft_reply
+    assert "sorry for asking again" in routed.draft_reply
     assert "calligraphy" in routed.draft_reply
     assert "contact you with pricing and the next steps" in routed.draft_reply

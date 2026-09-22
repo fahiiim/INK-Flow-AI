@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 from langchain_openai import ChatOpenAI
 
@@ -10,7 +10,7 @@ from ai_brain.email_cleaning import strip_quoted_email_content
 from ai_brain.extraction import TattooTextExtractor
 from ai_brain.reply import ConversationReplyComposer
 from ai_brain.routing import TattooRouter
-from ai_brain.schemas import Message
+from ai_brain.schemas import Message, TattooExtractionDraft
 
 
 class FailingLLM:
@@ -118,7 +118,7 @@ def test_group_watercolor_request_keeps_separate_person_details() -> None:
     assert "multiple_tattoo_projects" in routed.review_reasons
     assert "complex_routing_required" in routed.review_reasons
     assert "strongest match" in routed.draft_reply
-    assert "confirm the price" in routed.draft_reply
+    assert "custom estimate" in routed.draft_reply
     assert "recorded the following" not in routed.draft_reply.casefold()
     assert "flagged it for a personal review" in routed.draft_reply
 
@@ -202,3 +202,113 @@ def test_email_signature_is_not_treated_as_tattoo_content() -> None:
     )
     assert extracted.tattoo_idea == "Tulip"
     assert "Kind regards" not in extracted.tattoo_idea
+
+
+def test_real_email_thread_preserves_concept_size_color_and_placement() -> None:
+    """The reported production thread never forgets previously supplied data."""
+    extractor = _extractor()
+    router = TattooRouter(llm=cast(ChatOpenAI, FailingLLM()))
+    state: dict[str, Any] = {
+        "lead": {"name": "Fahim Sarker", "source": "outlook"},
+    }
+    history: list[Message] = []
+
+    def process(
+        message: str,
+        image_urls: list[str] | None = None,
+    ) -> tuple[TattooExtractionDraft, str]:
+        extracted = extractor.extract(
+            current_message=message,
+            style_tags=["unknown"],
+            new_image_urls=image_urls or [],
+            existing_db_state=state,
+            recent_chat_history=history,
+        )
+        routed = router.route(
+            extracted=extracted,
+            current_message=message,
+            recent_chat_history=history,
+            existing_db_state=state,
+            message_source="outlook",
+        )
+        history.extend(
+            [
+                Message(role="user", content=message),
+                Message(role="assistant", content=routed.draft_reply),
+            ]
+        )
+        state["intake"] = routed.model_dump()
+        return extracted, routed.draft_reply
+
+    first, first_reply = process(
+        "Hello, are you there? I want to get a tattoo on my hand, sized "
+        "(I've attached the reference image here). How much will it cost?",
+        ["https://example.com/first-reference.png"],
+    )
+    assert first.placement == "hand"
+    assert "reference images" not in first.missing_information
+    assert "custom estimate" in first_reply
+
+    second, second_reply = process(
+        "Okay, I've attached the photo of my tattoo. I don't know the exact "
+        "size; it would be about my hand size. The background is that I'm "
+        "matching this with my girlfriend, and it is skeleton art on my hand.",
+        ["https://example.com/second-reference.png"],
+    )
+    assert second.tattoo_idea == "Skeleton art"
+    assert second.placement == "hand"
+    assert second.size_estimate_cm == "10-15 cm"
+    assert second.party_size == 2
+    assert second.multi_entity_detected is True
+    assert "tattoo idea" not in second.missing_information
+    assert "size in cm" not in second.missing_information
+    assert "tattoo idea or background story" not in second_reply.casefold()
+    assert "custom estimate" not in second_reply
+
+    third, third_reply = process("It would be in black and gray.")
+    assert third.tattoo_idea == "Skeleton art"
+    assert third.placement == "hand"
+    assert third.size_estimate_cm == "10-15 cm"
+    assert third.color_preference == "black-and-grey"
+    assert "tattoo idea or background story" not in third_reply.casefold()
+
+    fourth, fourth_reply = process(
+        "I said my background story earlier, and here is the reference image "
+        "again.",
+        ["https://example.com/third-reference.png"],
+    )
+    assert fourth.tattoo_idea == "Skeleton art"
+    assert fourth.placement == "hand"
+    assert fourth.color_preference == "black-and-grey"
+    assert "where on your body" not in fourth_reply.casefold()
+    assert "tattoo idea or background story" not in fourth_reply.casefold()
+
+    fifth, fifth_reply = process("I already said it is on my hand.")
+    assert fifth.tattoo_idea == "Skeleton art"
+    assert fifth.placement == "hand"
+    assert fifth.size_estimate_cm == "10-15 cm"
+    assert fifth.color_preference == "black-and-grey"
+    assert "where on your body" not in fifth_reply.casefold()
+    assert "tattoo idea or background story" not in fifth_reply.casefold()
+    assert "sorry for asking again" in fifth_reply.casefold()
+
+
+def test_saved_project_reference_images_remain_fulfilled() -> None:
+    """A stored multi-person project keeps its uploaded references fulfilled."""
+    extracted = _extractor().extract(
+        current_message="It should be black and grey.",
+        style_tags=["unknown"],
+        existing_db_state={
+            "intake": {
+                "projects": [
+                    {
+                        "reference_image_urls": [
+                            "https://example.com/skeleton-reference.png",
+                        ],
+                    }
+                ]
+            }
+        },
+    )
+
+    assert "reference images" not in extracted.missing_information

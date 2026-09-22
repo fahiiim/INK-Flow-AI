@@ -301,6 +301,8 @@ _TATTOO_SUBJECT_WORDS = (
     "quote",
     "rose",
     "script",
+    "skeleton",
+    "skeleton art",
     "skull",
     "snake",
     "symbol",
@@ -708,10 +710,7 @@ class TattooTextExtractor:
             "color preference": self._is_blank(llm_output.color_preference),
             "reference images": not (
                 new_image_urls
-                or self._has_state_value(
-                    existing_db_state,
-                    ("reference_images", "image_urls", "images", "references"),
-                )
+                or self._has_reference_images(existing_db_state)
                 or self._mentions_reference_image(conversation_text)
                 or self._declines_reference_image(conversation_text)
             ),
@@ -1413,6 +1412,13 @@ class TattooTextExtractor:
         if current_idea:
             return current_idea
 
+        historical_idea = self._latest_history_value(
+            recent_chat_history,
+            self._extract_tattoo_idea_from_text,
+        )
+        if historical_idea:
+            return historical_idea
+
         stored_idea = self._get_state_text(
             existing_db_state,
             ("tattoo_idea", "idea", "concept"),
@@ -1420,13 +1426,6 @@ class TattooTextExtractor:
         stored_idea = strip_quoted_email_content(stored_idea)
         if stored_idea and not self._is_missing_tattoo_idea(stored_idea):
             return stored_idea
-
-        historical_idea = self._latest_history_value(
-            recent_chat_history,
-            self._extract_tattoo_idea_from_text,
-        )
-        if historical_idea:
-            return historical_idea
 
         normalized_llm_value = " ".join(llm_value.split())
         normalized_current = " ".join(current_message.split())
@@ -1470,6 +1469,29 @@ class TattooTextExtractor:
                     value,
                     (str, list, tuple, set, dict),
                 ):
+                    return True
+        return False
+
+    def _has_reference_images(
+        self,
+        existing_db_state: dict[str, Any],
+    ) -> bool:
+        """Find saved reference images at intake or per-project level."""
+        if self._has_state_value(
+            existing_db_state,
+            ("reference_images", "image_urls", "images", "references"),
+        ):
+            return True
+
+        for record in self._state_records(existing_db_state):
+            projects = record.get("projects")
+            if not isinstance(projects, list):
+                continue
+            for project in projects:
+                if not isinstance(project, dict):
+                    continue
+                references = project.get("reference_image_urls")
+                if isinstance(references, (list, tuple, set)) and references:
                     return True
         return False
 
@@ -1743,6 +1765,13 @@ class TattooTextExtractor:
         ):
             candidates.append(2)
         if re.search(r"\b(?:both\s+of\s+us|the\s+two\s+of\s+us)\b", normalized):
+            candidates.append(2)
+        if re.search(
+            r"\bmatch(?:ing)?\b.{0,50}\bwith\s+my\s+"
+            r"(?:girlfriend|boyfriend|partner|wife|husband|friend|"
+            r"sister|brother)\b",
+            normalized,
+        ):
             candidates.append(2)
         return max(candidates)
 
@@ -2321,7 +2350,15 @@ class TattooTextExtractor:
     ) -> bool:
         """Return whether the latest message intentionally addresses a field."""
         normalized = text.casefold()
-        return any(term in normalized for term in field_terms)
+        return any(
+            re.search(
+                rf"(?<!\w){re.escape(term.strip().casefold())}(?!\w)",
+                normalized,
+            )
+            is not None
+            for term in field_terms
+            if term.strip()
+        )
 
     def _has_positive_phrase(self, text: str, phrase: str) -> bool:
         """Return whether a phrase appears outside a rejection expression."""

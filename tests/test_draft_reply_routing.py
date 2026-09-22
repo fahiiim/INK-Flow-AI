@@ -225,7 +225,7 @@ def test_first_outlook_price_question_collects_missing_information() -> None:
     assert result.risk_level == "low"
     assert result.auto_reply_allowed is True
     assert result.telegram_review_required is False
-    assert "confirm the price after reviewing the remaining design details" in (
+    assert "the artist can provide a custom estimate" in (
         result.draft_reply
     )
     assert "please reply to this email with all of the following" not in (
