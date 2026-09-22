@@ -39,6 +39,8 @@ def test_group_watercolor_request_keeps_separate_person_details() -> None:
     )
 
     assert first.party_size == 2
+    assert first.multi_entity_detected is True
+    assert "complex routing required" in first.complexity_notes.casefold()
     assert [project.person_label for project in first.projects] == [
         "Client",
         "Girlfriend",
@@ -58,7 +60,7 @@ def test_group_watercolor_request_keeps_separate_person_details() -> None:
     assert "Yes, we can help with that" in first_reply
     assert "colour watercolor" not in first_reply
     assert "2 watercolor tattoos" in first_reply
-    assert first_reply.count("\n- ") <= 2
+    assert "\n- " not in first_reply
 
     second_message = (
         "I want a tulip. Mine in red, my girlfriend's in blue, both "
@@ -82,7 +84,7 @@ def test_group_watercolor_request_keeps_separate_person_details() -> None:
     assert second.tattoo_idea == "Tulip"
     assert second.party_size == 2
     assert second.placement == ""
-    assert second.size_estimate_cm == ""
+    assert second.size_estimate_cm == "10-15 cm"
     assert second.size_description == "hand-sized"
     assert second.size_status == "approximate"
     assert second.preferred_artist == "No preference"
@@ -107,14 +109,18 @@ def test_group_watercolor_request_keeps_separate_person_details() -> None:
     )
 
     assert routed.risk_level == "low"
+    assert routed.multi_entity_detected is True
+    assert routed.complexity_notes == second.complexity_notes
     assert routed.suggested_artist == "Hoss"
     assert routed.staff_review_required is True
     assert routed.telegram_review_required is True
     assert routed.intake_status == "needs_staff_review"
     assert "multiple_tattoo_projects" in routed.review_reasons
+    assert "complex_routing_required" in routed.review_reasons
     assert "strongest match" in routed.draft_reply
     assert "confirm the price" in routed.draft_reply
     assert "recorded the following" not in routed.draft_reply.casefold()
+    assert "flagged it for a personal review" in routed.draft_reply
 
     whatsapp = TattooRouter(
         llm=cast(ChatOpenAI, FailingLLM()),
@@ -144,6 +150,7 @@ def test_not_sure_is_a_valid_size_answer_and_triggers_staff_help() -> None:
             "intake": {
                 "tattoo_idea": "Tulip",
                 "placement": "forearm",
+                "size_estimate_cm": "12 cm",
                 "color_preference": "color",
                 "preferred_artist": "No preference",
                 "artist_preference_mode": "recommend",
@@ -153,6 +160,7 @@ def test_not_sure_is_a_valid_size_answer_and_triggers_staff_help() -> None:
     )
 
     assert extracted.size_description == "not sure"
+    assert extracted.size_estimate_cm == ""
     assert "size in cm" not in extracted.missing_information
 
     routed = TattooRouter(
@@ -164,6 +172,22 @@ def test_not_sure_is_a_valid_size_answer_and_triggers_staff_help() -> None:
     )
     assert "client_unsure_about_size" in routed.review_reasons
     assert "What size would you prefer" not in routed.draft_reply
+
+
+def test_coin_sized_request_gets_an_approximate_range() -> None:
+    """A common qualitative size becomes a safe range without re-questioning."""
+    extracted = _extractor().extract(
+        current_message=(
+            "I want a coin-sized red heart tattoo on my wrist."
+        ),
+        style_tags=["fine-line"],
+        existing_db_state={"lead": {"name": "Kosa Martin"}},
+    )
+
+    assert extracted.size_description == "coin-sized"
+    assert extracted.size_estimate_cm == "2-3 cm"
+    assert extracted.size_status == "approximate"
+    assert "size in cm" not in extracted.missing_information
 
 
 def test_email_signature_is_not_treated_as_tattoo_content() -> None:
