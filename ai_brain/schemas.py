@@ -365,6 +365,13 @@ class TattooExtractionDraft(BaseModel):
         le=20,
         description="Number of people represented by this inquiry.",
     )
+    multi_entity_detected: bool = Field(default=False)
+    complexity_notes: str = Field(
+        default="",
+        description=(
+            "Notes on complex requests, e.g., multiple people or colors."
+        ),
+    )
     projects: list[TattooProjectDetail] = Field(
         default_factory=list,
         max_length=20,
@@ -452,6 +459,13 @@ class AIExtractionOutput(BaseModel):
         description="New tattoo, cover-up, continuation, or touch-up.",
     )
     party_size: int = Field(default=1, ge=1, le=20)
+    multi_entity_detected: bool = Field(default=False)
+    complexity_notes: str = Field(
+        default="",
+        description=(
+            "Notes on complex requests, e.g., multiple people or colors."
+        ),
+    )
     projects: list[TattooProjectDetail] = Field(
         default_factory=list,
         max_length=20,
