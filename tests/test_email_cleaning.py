@@ -131,7 +131,8 @@ def test_realistic_second_email_extracts_only_client_answers() -> None:
         result,
         existing_db_state=inquiry.existing_db_state,
     )
-    assert "3 cm colour floral Colorful flower tattoo" in reply
+    assert "3 cm colour floral colorful flower tattoo" in reply
+    assert "To confirm what I have so far" in reply
     assert "- Preferred time:" not in reply
     assert "recorded the following" not in reply.casefold()
     assert "- Availability:" not in reply
@@ -283,7 +284,7 @@ def test_real_email_answers_normalize_inches_and_black_and_grey() -> None:
         current_message=inquiry.current_message,
         recent_chat_history=inquiry.recent_chat_history,
     )
-    assert "Thank you for the additional details" in reply
+    assert "Thanks, I've noted the tattoo type" in reply
     assert "We still need the following information" not in reply
     assert "custom estimate" not in reply
     assert "12.7 cm black-and-grey calligraphy tattoo" in reply
@@ -455,5 +456,5 @@ def test_calligraphic_wording_conversation_preserves_the_complete_quote() -> Non
     assert routed.auto_reply_allowed is False
     assert routed.draft_reply.startswith("Dear Fahim,")
     assert "sorry for asking again" in routed.draft_reply
-    assert "calligraphy" in routed.draft_reply
+    assert "calligraphy" in routed.draft_reply.casefold()
     assert "contact you with pricing and the next steps" in routed.draft_reply

@@ -17,5 +17,5 @@ rules:
 
   - name: Small floral work
     condition: "style_tags contains 'floral' AND size < 12cm"
-    action: "suggest_artist: sandra"
+    action: "suggest_artist: lana"
     priority: 70

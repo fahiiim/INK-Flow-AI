@@ -173,7 +173,7 @@ def test_router_keeps_basic_missing_information_low_risk() -> None:
     assert result.risk_level == "low"
     assert result.auto_reply_allowed is True
     assert result.telegram_review_required is False
-    assert result.suggested_artist == "Sandra"
+    assert result.suggested_artist == "Lana"
     assert result.confidence_level == "medium"
     assert "black-and-grey minimal and floral tattoo" in result.draft_reply
     assert "Does that sound right" in result.draft_reply
@@ -240,7 +240,7 @@ def test_cold_start_does_not_force_incomplete_intake_to_high_risk() -> None:
 
     result = router.route(draft, current_message="I want a floral tattoo.")
 
-    assert result.suggested_artist == "Unclear"
+    assert result.suggested_artist == "Lana"
     assert result.risk_level == "low"
     assert result.auto_reply_allowed is True
     assert result.telegram_review_required is False

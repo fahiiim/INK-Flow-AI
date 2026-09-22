@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
+from datetime import date as calendar_date
 
 from .schemas import (
     ARTIST_PREFERENCE_OPTIONS,
@@ -61,6 +62,20 @@ _PRICING_PATTERN = re.compile(
 )
 _POSSIBLE_PATTERN = re.compile(
     r"\b(?:is|would)\b.{0,30}\bpossible\b",
+    flags=re.IGNORECASE,
+)
+_ARTIST_GUIDANCE_PATTERN = re.compile(
+    r"\b(?:recommend|suggest|best|better|which\s+artist|who\s+would|"
+    r"portfolio|speciali[sz]|tell\s+me\s+about)\b",
+    flags=re.IGNORECASE,
+)
+_STUDIO_AVAILABILITY_PATTERN = re.compile(
+    r"\b(?:what|which)\s+(?:days?|dates?|times?|slots?)\b.{0,40}"
+    r"\bavailable\b|\bwhen\b.{0,25}\b(?:available|open)\b",
+    flags=re.IGNORECASE,
+)
+_PROJECT_TYPE_PATTERN = re.compile(
+    r"\b(?:new\s+tattoo|cover[- ]?up|continuation|touch[- ]?up)\b",
     flags=re.IGNORECASE,
 )
 _MANUAL_REVIEW_PATTERNS = (
@@ -183,6 +198,8 @@ class ConversationReplyComposer:
         current_message: str,
         recent_chat_history: list[Message] | None,
         risk_level: RiskLevel,
+        suggested_artist: str = "Unclear",
+        suggested_artist_details: str = "",
     ) -> str:
         """Acknowledge the latest turn and ask only the next useful question."""
         history = recent_chat_history or []
@@ -210,6 +227,13 @@ class ConversationReplyComposer:
             history=history,
         )
         complexity_notice = self._complexity_notice(extracted)
+        artist_guidance = self._artist_guidance(
+            extracted=extracted,
+            current_message=current_message,
+            suggested_artist=suggested_artist,
+            suggested_artist_details=suggested_artist_details,
+            history=history,
+        )
         if manual_review:
             review_subject = (
                 "the details and pricing" if pricing_requested else "this"
@@ -217,6 +241,8 @@ class ConversationReplyComposer:
             reply_parts = [acknowledgement]
             if complexity_notice:
                 reply_parts.append(complexity_notice)
+            if artist_guidance:
+                reply_parts.append(artist_guidance)
             reply_parts.append(
                 "I'll have the studio team review "
                 f"{review_subject} and get back to you."
@@ -237,6 +263,8 @@ class ConversationReplyComposer:
             reply_parts = [acknowledgement]
             if complexity_notice:
                 reply_parts.append(complexity_notice)
+            if artist_guidance:
+                reply_parts.append(artist_guidance)
             if pricing_acknowledgement_needed:
                 reply_parts.append(
                     self._pricing_message(extracted, history)
@@ -257,6 +285,8 @@ class ConversationReplyComposer:
         reply_parts = [acknowledgement]
         if complexity_notice:
             reply_parts.append(complexity_notice)
+        if artist_guidance:
+            reply_parts.append(artist_guidance)
         reply_parts.append(
             "I've got the main details now. I'll pass this to the team for "
             "a quick review."
@@ -270,6 +300,8 @@ class ConversationReplyComposer:
         current_message: str,
         recent_chat_history: list[Message] | None,
         risk_level: RiskLevel,
+        suggested_artist: str = "Unclear",
+        suggested_artist_details: str = "",
     ) -> str:
         """Summarize extracted facts once, unless already confirmed."""
         history = recent_chat_history or []
@@ -291,6 +323,8 @@ class ConversationReplyComposer:
                 current_message=current_message,
                 recent_chat_history=history,
                 risk_level=risk_level,
+                suggested_artist=suggested_artist,
+                suggested_artist_details=suggested_artist_details,
             )
         if self._is_greeting_only(current_message):
             return self.compose(
@@ -298,6 +332,8 @@ class ConversationReplyComposer:
                 current_message=current_message,
                 recent_chat_history=history,
                 risk_level=risk_level,
+                suggested_artist=suggested_artist,
+                suggested_artist_details=suggested_artist_details,
             )
         if self._details_already_confirmed(current_message, history):
             return self.compose(
@@ -305,6 +341,8 @@ class ConversationReplyComposer:
                 current_message=current_message,
                 recent_chat_history=history,
                 risk_level=risk_level,
+                suggested_artist=suggested_artist,
+                suggested_artist_details=suggested_artist_details,
             )
 
         summary = self._natural_summary(extracted)
@@ -314,6 +352,8 @@ class ConversationReplyComposer:
                 current_message=current_message,
                 recent_chat_history=history,
                 risk_level=risk_level,
+                suggested_artist=suggested_artist,
+                suggested_artist_details=suggested_artist_details,
             )
 
         questions = self._select_questions(
@@ -327,6 +367,15 @@ class ConversationReplyComposer:
         complexity_notice = self._complexity_notice(extracted)
         if complexity_notice:
             reply_parts.append(complexity_notice)
+        artist_guidance = self._artist_guidance(
+            extracted=extracted,
+            current_message=current_message,
+            suggested_artist=suggested_artist,
+            suggested_artist_details=suggested_artist_details,
+            history=history,
+        )
+        if artist_guidance:
+            reply_parts.append(artist_guidance)
         size_confirmation = self._approximate_size_question(
             extracted,
             history,
@@ -350,6 +399,7 @@ class ConversationReplyComposer:
         current_message: str = "",
         recent_chat_history: Sequence[Message] | None = None,
         suggested_artist: str = "Unclear",
+        suggested_artist_details: str = "",
     ) -> str:
         """Create a natural email that asks only the next useful questions."""
         history = recent_chat_history or []
@@ -377,50 +427,51 @@ class ConversationReplyComposer:
             term in current_message.casefold()
             for term in _REPEATED_DETAIL_TERMS
         )
+        last_requirement = len(missing_information) == 1
         sections = [
             self._outlook_salutation(
                 existing_db_state,
                 extracted.client_name,
             ),
-            (
-                (
-                    (
-                        "You're right - sorry for asking again. I have kept "
-                        "the details you already provided."
-                        if repeated_detail
-                        else "Thank you for clarifying - I have that noted "
-                        "correctly now."
-                    )
-                    if correction
-                    else "Thank you for the additional details."
-                )
-                if is_follow_up
-                else (
-                    "Yes, we can help with that - thank you for reaching "
-                    "out to Tattoo Hysteria."
-                    if _POSSIBLE_PATTERN.search(current_message)
-                    else "Thank you for reaching out to Tattoo Hysteria - "
-                    "we'd be happy to help with your tattoo request."
-                )
+            self._outlook_opening(
+                current_message=current_message,
+                is_follow_up=is_follow_up,
+                correction=correction,
+                repeated_detail=repeated_detail,
             ),
         ]
 
-        request_summary = self._human_request_summary(extracted)
-        if request_summary:
-            sections.append(request_summary)
-
-        complexity_notice = self._complexity_notice(extracted)
-        if complexity_notice:
-            sections.append(complexity_notice)
-
-        if (
-            extracted.artist_preference_mode == "recommend"
-            and suggested_artist != "Unclear"
-        ):
+        if last_requirement or not missing_information:
             sections.append(
-                f"Based on the style, {suggested_artist} looks like the "
-                "strongest match for your request."
+                self._outlook_confirmation_summary(
+                    extracted,
+                    suggested_artist,
+                )
             )
+        else:
+            request_summary = self._human_request_summary(extracted)
+            if request_summary and not self._assistant_history_contains(
+                request_summary,
+                history,
+            ):
+                sections.append(request_summary)
+
+            complexity_notice = self._complexity_notice(extracted)
+            if complexity_notice and not self._assistant_history_contains(
+                complexity_notice,
+                history,
+            ):
+                sections.append(complexity_notice)
+
+        artist_guidance = self._artist_guidance(
+            extracted=extracted,
+            current_message=current_message,
+            suggested_artist=suggested_artist,
+            suggested_artist_details=suggested_artist_details,
+            history=history,
+        )
+        if artist_guidance:
+            sections.append(artist_guidance)
 
         if pricing_acknowledgement_needed:
             if self._pricing_previously_acknowledged(history):
@@ -441,6 +492,19 @@ class ConversationReplyComposer:
                 )
 
         if missing_information:
+            if _STUDIO_AVAILABILITY_PATTERN.search(current_message):
+                sections.append(
+                    "I don't have the live studio calendar in this email "
+                    "thread. If you send one or two dates and time windows "
+                    "that suit you, the team can check them for you."
+                )
+                sections.append(
+                    "Once we have your preferred options, we'll confirm what "
+                    "is available."
+                )
+                sections.append("Kind regards,\nTattoo Hysteria")
+                return "\n\n".join(sections)
+
             questions = self._select_questions(
                 missing_information=missing_information,
                 history=list(history),
@@ -451,18 +515,28 @@ class ConversationReplyComposer:
                 history=history,
             )
             if questions:
-                intro = (
-                    "To help us move this forward, could you share a little "
-                    "more detail?"
-                    if not is_follow_up
-                    else "A little more detail would help us move forward."
+                if last_requirement and len(questions) == 1:
+                    sections.append(f"One last detail: {questions[0]}")
+                else:
+                    intro = (
+                        "To help us move this forward, could you share a "
+                        "little more detail?"
+                        if not is_follow_up
+                        else "Could you help me with the next detail?"
+                    )
+                    sections.append(" ".join([intro, *questions]))
+            if not last_requirement:
+                sections.append(
+                    "Once we have those details, we'll guide you through the "
+                    "next step."
                 )
-                sections.append(" ".join([intro, *questions]))
-            sections.append(
-                "Once we have those details, we'll guide you through the next "
-                "step."
-            )
         else:
+            confirmation = self._outlook_confirmation_summary(
+                extracted,
+                suggested_artist,
+            )
+            if confirmation not in sections:
+                sections.append(confirmation)
             sections.append(
                 "Our studio team will review everything and "
                 + (
@@ -474,6 +548,185 @@ class ConversationReplyComposer:
 
         sections.append("Kind regards,\nTattoo Hysteria")
         return "\n\n".join(sections)
+
+    def _outlook_opening(
+        self,
+        current_message: str,
+        is_follow_up: bool,
+        correction: bool,
+        repeated_detail: bool,
+    ) -> str:
+        """Acknowledge the latest email without repeating a stock opening."""
+        if not is_follow_up:
+            if _POSSIBLE_PATTERN.search(current_message):
+                return (
+                    "Yes, we can help with that - thank you for reaching out "
+                    "to Tattoo Hysteria."
+                )
+            return (
+                "Thank you for reaching out to Tattoo Hysteria - we'd be "
+                "happy to help with your tattoo request."
+            )
+        if repeated_detail:
+            return (
+                "You're right - sorry for asking again. I have kept the "
+                "details you already provided."
+            )
+        if correction:
+            return "Thanks for clarifying - I've updated that detail."
+        if _ARTIST_GUIDANCE_PATTERN.search(current_message):
+            return "That's a good question."
+        if _STUDIO_AVAILABILITY_PATTERN.search(current_message):
+            return "That's a good question."
+        normalized = current_message.casefold()
+        if re.search(r"\byes\b.{0,30}\b\d", normalized):
+            return "Perfect, thanks for confirming the size."
+        if re.search(r"\b(?:studio\s+visit|online\s+appointment)\b", normalized):
+            return "Thanks, I've noted your appointment preference."
+        if _PROJECT_TYPE_PATTERN.search(current_message):
+            return "Thanks, I've noted the tattoo type."
+        if (
+            any(term in normalized for term in _SCHEDULE_TERMS)
+            or re.search(r"\b\d{1,2}:\d{2}\b", normalized)
+        ):
+            return "Thanks, I've added your preferred timing."
+        return "Thanks, I've added those details."
+
+    def _assistant_history_contains(
+        self,
+        text: str,
+        history: Sequence[Message],
+    ) -> bool:
+        """Return whether assistant history already contains the same prose."""
+        needle = " ".join(text.split()).casefold()
+        return any(
+            message.role == "assistant"
+            and needle in " ".join(message.content.split()).casefold()
+            for message in history
+        )
+
+    def _artist_guidance(
+        self,
+        extracted: TattooExtractionDraft,
+        current_message: str,
+        suggested_artist: str,
+        suggested_artist_details: str,
+        history: Sequence[Message],
+    ) -> str:
+        """Answer artist questions from configured portfolio information."""
+        if not _ARTIST_GUIDANCE_PATTERN.search(current_message):
+            return ""
+        if suggested_artist == "Unclear":
+            return (
+                "I don't have enough of a portfolio match to recommend one "
+                "artist confidently yet, so the studio team will compare the "
+                "design with the artists' work."
+            )
+
+        known_styles = [
+            style for style in extracted.style_tags if style != "unknown"
+        ]
+        style_phrase = (
+            f" for your {' and '.join(known_styles)} request"
+            if known_styles
+            else ""
+        )
+        recommendation = (
+            f"Based on the portfolio match{style_phrase}, I'd recommend "
+            f"{suggested_artist}."
+        )
+        if suggested_artist_details:
+            recommendation = f"{recommendation} {suggested_artist_details}"
+        if self._assistant_history_contains(recommendation, history):
+            return (
+                f"{suggested_artist} remains my recommendation based on the "
+                "style and design details you've shared."
+            )
+        return recommendation
+
+    def _outlook_confirmation_summary(
+        self,
+        extracted: TattooExtractionDraft,
+        suggested_artist: str,
+    ) -> str:
+        """Summarize completed fields before the final intake question."""
+        details: list[str] = []
+        idea = self._idea_fragment(extracted.tattoo_idea)
+        style_fragment = " and ".join(
+            style
+            for style in extracted.style_tags
+            if style not in {"unknown", "black-and-grey"}
+            and style.casefold() not in idea.casefold()
+        )
+        design_parts = [
+            value
+            for value in (
+                extracted.size_estimate_cm,
+                (
+                    "black-and-grey"
+                    if extracted.color_preference == "black-and-grey"
+                    else "colour"
+                    if extracted.color_preference == "color"
+                    else ""
+                ),
+                style_fragment,
+                idea,
+            )
+            if value
+        ]
+        if design_parts or extracted.placement:
+            design = " ".join(design_parts).strip() or "tattoo"
+            if "tattoo" not in design.casefold():
+                design += " tattoo"
+            if extracted.placement:
+                design += f" on your {extracted.placement}"
+            details.append(design)
+        if extracted.appointment_type:
+            details.append(
+                extracted.appointment_type.replace("_", " ")
+            )
+        if extracted.preferred_artist not in {"", "No preference"}:
+            details.append(
+                f"preferred artist: {extracted.preferred_artist}"
+            )
+        elif suggested_artist != "Unclear":
+            details.append(f"recommended artist: {suggested_artist}")
+
+        schedule = self._confirmation_schedule(extracted)
+        if schedule:
+            details.append(f"preferred schedule: {schedule}")
+        if extracted.tattoo_project_type:
+            details.append(extracted.tattoo_project_type)
+        if "reference images" not in extracted.missing_information:
+            details.append("reference image received")
+
+        if not details:
+            return "We're nearly finished with your request."
+        return "To confirm what I have so far: " + "; ".join(details) + "."
+
+    def _confirmation_schedule(
+        self,
+        extracted: TattooExtractionDraft,
+    ) -> str:
+        """Format saved date and time for a client-facing confirmation."""
+        if extracted.date:
+            try:
+                parsed = calendar_date.fromisoformat(extracted.date)
+                date_text = f"{parsed.day} {parsed.strftime('%B %Y')}"
+            except ValueError:
+                date_text = extracted.date
+            if extracted.time:
+                return f"{date_text} at {extracted.time}"
+            return date_text
+        return extracted.availability
+
+    def _idea_fragment(self, value: str) -> str:
+        """Convert a short extracted title into natural sentence casing."""
+        if not value:
+            return ""
+        if value[:1].isupper() and value[1:].islower():
+            return value[:1].lower() + value[1:]
+        return value
 
     def _human_request_summary(
         self,
@@ -538,7 +791,7 @@ class ConversationReplyComposer:
             if tag not in {"unknown", "black-and-grey"}
         )
         if extracted.tattoo_idea:
-            details.append(extracted.tattoo_idea)
+            details.append(self._idea_fragment(extracted.tattoo_idea))
         if not details and not extracted.placement:
             return ""
         design = " ".join(details).strip() or "tattoo"

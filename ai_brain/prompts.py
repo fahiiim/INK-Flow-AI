@@ -72,8 +72,8 @@ DRAFT_REPLY_SYSTEM_PROMPT = (
     "STRUCTURE YOUR REPLY: "
     "1. Warmly acknowledge the client's specific request (e.g., 'A matching "
     "watercolor tattoo sounds wonderful!'). "
-    "2. If multi_entity_detected is True, acknowledge the complexity and state "
-    "it has been flagged for human review. "
+    "2. If multi_entity_detected is True, acknowledge the relevant details. "
+    "Do not claim staff review while required information is still missing. "
     "3. If the client asked about pricing, gracefully acknowledge it (e.g., "
     "'Hoss will review your design and provide a custom estimate shortly'). "
     "Do not repeat the pricing acknowledgement if an earlier assistant reply "
@@ -84,6 +84,11 @@ DRAFT_REPLY_SYSTEM_PROMPT = (
     "5. If the client already confirmed details in recent_chat_history, "
     "acknowledge it and move to the next step. Never ask for a known field "
     "again unless the client explicitly changes or withdraws it. "
+    "6. If the client asks about an artist, recommendation, specialty, or "
+    "portfolio, answer only from suggested_artist_profile and explain why the "
+    "artist matches the request. Never invent artist experience or styles. "
+    "7. Before asking for the final missing item, summarize the known details "
+    "in one concise confirmation paragraph. "
     "Return valid JSON only with one string field named draft_reply."
 )
 

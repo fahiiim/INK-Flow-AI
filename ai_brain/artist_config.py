@@ -49,6 +49,14 @@ class ArtistProfile(BaseModel):
     )
     display_name: str = Field(min_length=1, max_length=80)
     specialties: list[StyleTag] = Field(min_length=1, max_length=10)
+    profile_summary: str = Field(
+        default="",
+        max_length=1200,
+        description=(
+            "Client-safe background and portfolio summary used when answering "
+            "artist questions."
+        ),
+    )
     min_size_cm: float | None = Field(default=None, ge=0)
     max_size_cm: float | None = Field(default=None, ge=0)
     is_active: bool = True

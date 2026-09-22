@@ -342,17 +342,29 @@ _TATTOO_IDEA_MODIFIERS = (
 )
 _MONTH_NUMBERS = {
     "january": 1,
+    "jan": 1,
     "february": 2,
+    "feb": 2,
     "march": 3,
+    "mar": 3,
     "april": 4,
+    "apr": 4,
     "may": 5,
     "june": 6,
+    "jun": 6,
     "july": 7,
+    "jul": 7,
     "august": 8,
+    "aug": 8,
     "september": 9,
+    "sep": 9,
+    "sept": 9,
     "october": 10,
+    "oct": 10,
     "november": 11,
+    "nov": 11,
     "december": 12,
+    "dec": 12,
 }
 _WEEKDAY_NUMBERS = {
     "monday": 0,
@@ -723,7 +735,10 @@ class TattooTextExtractor:
                 or self._mentions_reference_image(conversation_text)
                 or self._declines_reference_image(conversation_text)
             ),
-            "preferred artist": self._is_blank(llm_output.preferred_artist),
+            "preferred artist": (
+                self._is_blank(llm_output.preferred_artist)
+                and llm_output.artist_preference_mode == "unknown"
+            ),
             "appointment type": self._is_blank(llm_output.appointment_type),
             "preferred dates or availability": self._is_blank(
                 llm_output.availability
@@ -1276,6 +1291,8 @@ class TattooTextExtractor:
         current_value = self._extract_size_description(current_message)
         if current_value:
             return current_value
+        if self._extract_size_from_text(current_message):
+            return ""
         if self._is_uncertain_answer(current_message) and any(
             message.role == "assistant"
             and any(
@@ -1285,12 +1302,14 @@ class TattooTextExtractor:
             for message in recent_chat_history[-2:]
         ):
             return "not sure"
-        history_value = self._latest_history_value(
-            recent_chat_history,
-            self._extract_size_description,
-        )
-        if history_value:
-            return history_value
+        for message in reversed(recent_chat_history):
+            if message.role != "user":
+                continue
+            if self._extract_size_from_text(message.content):
+                return ""
+            history_value = self._extract_size_description(message.content)
+            if history_value:
+                return history_value
         stored_value = self._get_state_text(
             existing_db_state,
             ("size_description", "size_label", "qualitative_size"),
@@ -1895,7 +1914,11 @@ class TattooTextExtractor:
         if re.search(
             r"\b(?:recommend|suggest)\b.{0,45}\b(?:artist|best fit|who)\b|"
             r"\b(?:best fit|best artist)\b|"
-            r"\b(?:do not|don't|dont)\s+know\b.{0,35}\bartist\b",
+            r"\b(?:do not|don't|dont)\s+know\b.{0,35}\bartist\b|"
+            r"\bwho\b.{0,30}\b(?:best|better)\b|"
+            r"\b(?:best|better)\b.{0,30}\b(?:among them|for me)\b|"
+            r"\b(?:do not|don't|dont)\s+know\b.{0,25}"
+            r"\bthem\b.{0,20}\bpersonally\b",
             normalized,
         ):
             return "recommend"
@@ -2077,7 +2100,11 @@ class TattooTextExtractor:
             r"whoever\s+(?:is|you\s+think)|you\s+(?:can\s+)?choose|"
             r"(?:recommend|suggest)\b.{0,35}\b(?:artist|best fit)|"
             r"(?:best fit|best artist)|"
-            r"(?:do not|don't|dont)\s+know\b.{0,30}\bartist)\b"
+            r"(?:do not|don't|dont)\s+know\b.{0,30}\bartist|"
+            r"who\b.{0,30}\b(?:best|better)\b|"
+            r"(?:best|better)\b.{0,30}\b(?:among them|for me)|"
+            r"(?:do not|don't|dont)\s+know\b.{0,25}"
+            r"\bthem\b.{0,20}\bpersonally)\b"
         )
         for match in no_preference_pattern.finditer(normalized):
             matches.append((match.start(), "No preference"))
@@ -2173,17 +2200,35 @@ class TattooTextExtractor:
     def _extract_size_from_text(self, text: str) -> str:
         """Extract a size and normalize imperial measurements to centimetres."""
         candidates: list[tuple[int, str]] = []
+        range_spans: list[tuple[int, int]] = []
+        range_pattern = re.compile(
+            r"\b(?P<minimum>\d+(?:\.\d+)?)\s*(?:-|–|—|to)\s*"
+            r"(?P<maximum>\d+(?:\.\d+)?)\s*"
+            r"(?:cm|centimeters?|centimetres?)\b",
+            flags=re.IGNORECASE,
+        )
+        for match in range_pattern.finditer(text):
+            minimum = self._normalize_decimal(match.group("minimum"))
+            maximum = self._normalize_decimal(match.group("maximum"))
+            if minimum is None or maximum is None:
+                continue
+            candidates.append(
+                (match.start(), f"{minimum}-{maximum} cm")
+            )
+            range_spans.append(match.span())
+
         cm_pattern = (
             r"\b(?P<value>\d+(?:\.\d+)?)\s*"
             r"(?:cm|centimeters?|centimetres?)\b"
         )
         for match in re.finditer(cm_pattern, text, flags=re.IGNORECASE):
-            try:
-                normalized = format(
-                    Decimal(match.group("value")).normalize(),
-                    "f",
-                )
-            except InvalidOperation:
+            if any(
+                start <= match.start() < end
+                for start, end in range_spans
+            ):
+                continue
+            normalized = self._normalize_decimal(match.group("value"))
+            if normalized is None:
                 continue
             candidates.append((match.start(), f"{normalized} cm"))
 
@@ -2207,6 +2252,13 @@ class TattooTextExtractor:
         if not candidates:
             return ""
         return max(candidates, key=lambda item: item[0])[1]
+
+    def _normalize_decimal(self, value: str) -> str | None:
+        """Normalize one decimal number without insignificant zeroes."""
+        try:
+            return format(Decimal(value).normalize(), "f")
+        except InvalidOperation:
+            return None
 
     def _extract_placement_from_text(self, text: str) -> str:
         """Extract the latest positively stated common body placement."""
@@ -2284,7 +2336,8 @@ class TattooTextExtractor:
 
         month_names = "|".join(_MONTH_NUMBERS)
         month_first = re.compile(
-            rf"\b({month_names})\s+(\d{{1,2}})(?:st|nd|rd|th)?"
+            rf"\b({month_names})\s+(\d{{1,2}})(?:st|nd|rd|th)?\b"
+            rf"(?!\s*:)"
             rf"(?:,?\s+(\d{{4}}))?\b",
             flags=re.IGNORECASE,
         )

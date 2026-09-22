@@ -307,7 +307,8 @@ def test_outlook_complete_inquiry_confirms_review_without_questions() -> None:
 
     assert reply.startswith("Dear Maruf,\n\n")
     assert "Subject:" not in reply
-    assert "5cm black-and-grey fine-line Fine-line lotus tattoo" in reply
+    assert "5cm black-and-grey fine-line lotus tattoo" in reply
+    assert "To confirm what I have so far" in reply
     assert "on your inner wrist" in reply
     assert "recorded the following" not in reply.casefold()
     assert reply.count("\n- ") == 0
@@ -336,6 +337,6 @@ def test_outlook_hides_internal_enum_and_duplicate_availability() -> None:
 
     reply = ConversationReplyComposer().compose_outlook_email(extracted)
 
-    assert "3 cm colour fine-line Colorful flower tattoo" in reply
+    assert "3 cm colour fine-line colorful flower tattoo" in reply
     assert "studio_visit" not in reply
     assert "- Availability:" not in reply

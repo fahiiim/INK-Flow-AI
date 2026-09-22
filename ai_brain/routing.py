@@ -204,6 +204,9 @@ class TattooRouter:
         message_source: MessageSource,
     ) -> str:
         """Generate and strictly validate a client-facing draft reply."""
+        suggested_artist_details = self._artist_profile_summary(
+            suggested_artist
+        )
         if message_source == "outlook":
             return self._reply_composer.compose_outlook_email(
                 extracted=extracted,
@@ -211,6 +214,7 @@ class TattooRouter:
                 current_message=current_message,
                 recent_chat_history=recent_chat_history,
                 suggested_artist=suggested_artist,
+                suggested_artist_details=suggested_artist_details,
             )
         if extracted.missing_information:
             return self._reply_composer.compose_validation(
@@ -218,6 +222,8 @@ class TattooRouter:
                 current_message=current_message,
                 recent_chat_history=recent_chat_history,
                 risk_level=risk_level,
+                suggested_artist=suggested_artist,
+                suggested_artist_details=suggested_artist_details,
             )
 
         try:
@@ -251,6 +257,7 @@ class TattooRouter:
                         extracted.artist_preference_mode
                     ),
                     "pricing_requested": extracted.pricing_requested,
+                    "suggested_artist_profile": suggested_artist_details,
                 },
                 missing_information=extracted.missing_information,
                 recent_chat_history=recent_chat_history,
@@ -277,7 +284,19 @@ class TattooRouter:
                 current_message=current_message,
                 recent_chat_history=recent_chat_history,
                 risk_level=risk_level,
+                suggested_artist=suggested_artist,
+                suggested_artist_details=suggested_artist_details,
             )
+
+    def _artist_profile_summary(
+        self,
+        suggested_artist: SuggestedArtist,
+    ) -> str:
+        """Return client-safe portfolio context for a suggested artist."""
+        for artist in self._artist_config.get_active_artists():
+            if artist.display_name.casefold() == suggested_artist.casefold():
+                return artist.profile_summary
+        return ""
 
     def _suggest_artist(
         self,

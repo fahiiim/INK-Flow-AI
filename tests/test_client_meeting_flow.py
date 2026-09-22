@@ -10,7 +10,7 @@ from ai_brain.email_cleaning import strip_quoted_email_content
 from ai_brain.extraction import TattooTextExtractor
 from ai_brain.reply import ConversationReplyComposer
 from ai_brain.routing import TattooRouter
-from ai_brain.schemas import Message, TattooExtractionDraft
+from ai_brain.schemas import AIExtractionOutput, Message, TattooExtractionDraft
 
 
 class FailingLLM:
@@ -116,10 +116,11 @@ def test_group_watercolor_request_keeps_separate_person_details() -> None:
     assert routed.telegram_review_required is False
     assert routed.intake_status == "collecting_info"
     assert routed.review_reasons == []
-    assert "strongest match" in routed.draft_reply
+    assert "recommend Hoss" in routed.draft_reply
+    assert "tattooed professionally since 2005" in routed.draft_reply
     assert "custom estimate" in routed.draft_reply
     assert "recorded the following" not in routed.draft_reply.casefold()
-    assert "separate tattoo details together" in routed.draft_reply
+    assert "separate tattoo details together" not in routed.draft_reply
 
     whatsapp = TattooRouter(
         llm=cast(ChatOpenAI, FailingLLM()),
@@ -398,9 +399,147 @@ def test_matching_existing_tattoo_email_gets_a_specific_reply() -> None:
     assert routed.auto_reply_allowed is True
     assert routed.staff_review_required is False
     assert routed.telegram_review_required is False
-    assert "10-15 cm black-and-grey watercolor Skeleton" in (
+    assert "10-15 cm black-and-grey watercolor skeleton" in (
         routed.draft_reply
     )
     assert "match an existing tattoo" in routed.draft_reply
     assert "10 to 15 cm sound right?" in routed.draft_reply
     assert "updated design details" in routed.draft_reply
+
+
+def test_full_artist_and_scheduling_thread_preserves_every_answer() -> None:
+    """The reported email thread reaches completion without memory loops."""
+    extractor = _extractor()
+    router = TattooRouter(llm=cast(ChatOpenAI, FailingLLM()))
+    state: dict[str, Any] = {
+        "lead": {"name": "Fahim Sarker", "source": "outlook"},
+    }
+    history: list[Message] = []
+
+    def process(
+        message: str,
+        image_urls: list[str] | None = None,
+    ) -> AIExtractionOutput:
+        extracted = extractor.extract(
+            current_message=message,
+            style_tags=["unknown"],
+            new_image_urls=image_urls or [],
+            existing_db_state=state,
+            recent_chat_history=history,
+        )
+        routed = router.route(
+            extracted=extracted,
+            current_message=message,
+            recent_chat_history=history,
+            existing_db_state=state,
+            message_source="outlook",
+        )
+        history.extend(
+            [
+                Message(role="user", content=message),
+                Message(role="assistant", content=routed.draft_reply),
+            ]
+        )
+        state["intake"] = routed.model_dump()
+        return routed
+
+    process(
+        "I want a tattoo on my hand. I've attached a reference image. "
+        "How much will it cost?",
+        ["https://example.com/reference.png"],
+    )
+    design = process(
+        "I want it in watercolor. I'm not sure about the size; it will fit "
+        "on my hand. My girlfriend has a tattoo and I want to match it in "
+        "black-and-gray. It will be a skeleton on my hand."
+    )
+    assert design.risk_level == "low"
+    assert design.telegram_review_required is False
+
+    recommendation = process(
+        "Yes, it is around 10-15cm. I don't know any artists personally; "
+        "who would be better among them?"
+    )
+    assert recommendation.size_estimate_cm == "10-15 cm"
+    assert recommendation.size_description == ""
+    assert recommendation.preferred_artist == "No preference"
+    assert recommendation.artist_preference_mode == "recommend"
+    assert "preferred artist" not in recommendation.missing_information
+    assert "recommend Hoss" in recommendation.draft_reply
+    assert "tattooed professionally since 2005" in (
+        recommendation.draft_reply
+    )
+    assert "not sure" not in recommendation.draft_reply
+
+    appointment = process("studio visit")
+    assert appointment.appointment_type == "studio_visit"
+    assert "preferred artist" not in appointment.missing_information
+    assert "Do you have a preferred artist?" not in appointment.draft_reply
+
+    repeated_artist_question = process(
+        "I don't know them personally; who would be the best for me?"
+    )
+    assert "Hoss remains my recommendation" in (
+        repeated_artist_question.draft_reply
+    )
+
+    availability_question = process(
+        "What days and times do you have available?"
+    )
+    assert "live studio calendar" in availability_question.draft_reply
+    assert "Do you have a preferred artist?" not in (
+        availability_question.draft_reply
+    )
+
+    artist_and_time = process(
+        "I prefer 4:00. Hoss is my preferred artist."
+    )
+    assert artist_and_time.preferred_artist == "Hoss"
+    assert artist_and_time.artist_preference_mode == "specific"
+
+    schedule = process("28th Sept 9:00 AM")
+    assert schedule.date == "2026-09-28"
+    assert schedule.time == "09:00"
+    assert schedule.availability == "2026-09-28 at 09:00"
+    assert schedule.missing_information == ["tattoo project type"]
+    assert "To confirm what I have so far" in schedule.draft_reply
+    assert "preferred artist: Hoss" in schedule.draft_reply
+    assert "28 September 2026 at 09:00" in schedule.draft_reply
+    assert "One last detail" in schedule.draft_reply
+
+    completed = process("new tattoo")
+    assert completed.date == "2026-09-28"
+    assert completed.time == "09:00"
+    assert completed.availability == "2026-09-28 at 09:00"
+    assert completed.tattoo_project_type == "new tattoo"
+    assert completed.missing_information == []
+    assert completed.risk_level == "high"
+    assert completed.telegram_review_required is True
+
+
+def test_specific_artist_question_uses_configured_portfolio() -> None:
+    """Artist questions use verified studio profile data."""
+    extracted = TattooExtractionDraft(
+        client_name="Fahim Sarker",
+        tattoo_idea="Meaningful geometric design",
+        style_tags=["geometric"],
+        placement="forearm",
+        size_estimate_cm="10 cm",
+        color_preference="black-and-grey",
+        preferred_artist="Nina",
+        artist_preference_mode="specific",
+        missing_information=["appointment type"],
+    )
+
+    routed = TattooRouter(
+        llm=cast(ChatOpenAI, FailingLLM()),
+    ).route(
+        extracted=extracted,
+        current_message="Can you tell me about Nina and her background?",
+        existing_db_state={"lead": {"name": "Fahim Sarker"}},
+        message_source="outlook",
+    )
+
+    assert "master's degree" in routed.draft_reply
+    assert "Politecnica Design University" in routed.draft_reply
+    assert "Milan" in routed.draft_reply

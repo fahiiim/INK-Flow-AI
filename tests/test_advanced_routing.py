@@ -246,6 +246,7 @@ def test_artist_config_validation() -> None:
     }
     assert all(artist.display_name for artist in artists)
     assert all(artist.specialties for artist in artists)
+    assert all(artist.profile_summary for artist in artists)
     assert manager.validate_artist_assignment(
         "hoss",
         ["traditional"],
