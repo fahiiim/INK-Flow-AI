@@ -181,7 +181,7 @@ def test_outlook_route_uses_email_composer_and_one_routing_llm_call() -> None:
 
     assert result.draft_reply.startswith("Dear Maruf,\n\n")
     assert "Subject:" not in result.draft_reply
-    assert result.draft_reply.count("\n- ") == 2
+    assert "\n- " not in result.draft_reply
     assert "recorded the following" not in result.draft_reply.casefold()
     assert "Dear Maruf," in result.draft_reply
     assert result.risk_level == "low"
@@ -231,4 +231,4 @@ def test_first_outlook_price_question_collects_missing_information() -> None:
     assert "please reply to this email with all of the following" not in (
         result.draft_reply
     )
-    assert result.draft_reply.count("\n- ") == 2
+    assert "\n- " not in result.draft_reply
