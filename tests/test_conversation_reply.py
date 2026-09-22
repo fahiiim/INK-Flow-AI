@@ -274,10 +274,10 @@ def test_outlook_email_asks_only_the_next_two_missing_items() -> None:
     assert "we'd be happy to help" in reply
     assert "recorded the following" not in reply.casefold()
     assert "please reply to this email with all of the following" not in reply
-    assert "- What is your full name?" in reply
-    assert "- What is your tattoo idea or background story?" in reply
-    assert "- What size would you prefer in centimetres?" not in reply
-    assert reply.count("\n- ") == 2
+    assert "What is your full name?" in reply
+    assert "What is your tattoo idea or background story?" in reply
+    assert "What size would you prefer in centimetres?" not in reply
+    assert "\n- " not in reply
     assert "- Where on your body would you like the tattoo?" not in reply
     assert "studio_visit" not in reply
     assert "service code" not in reply.casefold()
