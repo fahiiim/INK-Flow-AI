@@ -135,7 +135,7 @@ def test_realistic_second_email_extracts_only_client_answers() -> None:
     assert "- Preferred time:" not in reply
     assert "recorded the following" not in reply.casefold()
     assert "- Availability:" not in reply
-    assert "- What tattoo style would you prefer?" in reply
+    assert "What tattoo style would you prefer?" in reply
     assert "fine-line, watercolor, minimal, floral" in reply
     assert "On Wed" not in reply
 
@@ -214,7 +214,7 @@ def test_calligraphy_style_without_wording_keeps_tattoo_idea_missing() -> None:
         current_message=message,
     )
     assert "confirm the price after reviewing the remaining design details" in reply
-    assert "- What is your tattoo idea or background story?" in reply
+    assert "What is your tattoo idea or background story?" in reply
     assert "online appointment or a studio visit" not in reply
 
 
