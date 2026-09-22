@@ -125,11 +125,15 @@ class TattooRouter:
         db_state = existing_db_state or {}
         artist_decision = self._suggest_artist(extracted)
         risk_level = self._classify_risk(extracted)
-        review_reasons = self._review_reasons(extracted, artist_decision)
-        staff_review_required = risk_level == "high" or bool(review_reasons)
-        if extracted.missing_information and staff_review_required:
-            intake_status = "needs_staff_review"
-        elif extracted.missing_information:
+        pending_review_reasons = self._review_reasons(
+            extracted,
+            artist_decision,
+        )
+        staff_review_required = risk_level == "high"
+        review_reasons = (
+            pending_review_reasons if staff_review_required else []
+        )
+        if extracted.missing_information:
             intake_status = "collecting_info"
         else:
             intake_status = "ready_for_review"
@@ -186,7 +190,7 @@ class TattooRouter:
             risk_level=risk_level,
             draft_reply=draft_reply,
             auto_reply_allowed=risk_level == "low",
-            telegram_review_required=staff_review_required,
+            telegram_review_required=risk_level == "high",
         )
 
     def _generate_draft_reply(
@@ -639,7 +643,7 @@ class TattooRouter:
         extracted: TattooExtractionDraft,
         artist_decision: _ArtistRoutingDecision,
     ) -> list[str]:
-        """Identify normal inquiries that need staff help before completion."""
+        """Identify complexity reasons to expose once intake is complete."""
         reasons: list[str] = []
         if extracted.multi_entity_detected:
             reasons.append("complex_routing_required")

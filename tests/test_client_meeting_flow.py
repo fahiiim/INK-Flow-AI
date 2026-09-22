@@ -112,15 +112,14 @@ def test_group_watercolor_request_keeps_separate_person_details() -> None:
     assert routed.multi_entity_detected is True
     assert routed.complexity_notes == second.complexity_notes
     assert routed.suggested_artist == "Hoss"
-    assert routed.staff_review_required is True
-    assert routed.telegram_review_required is True
-    assert routed.intake_status == "needs_staff_review"
-    assert "multiple_tattoo_projects" in routed.review_reasons
-    assert "complex_routing_required" in routed.review_reasons
+    assert routed.staff_review_required is False
+    assert routed.telegram_review_required is False
+    assert routed.intake_status == "collecting_info"
+    assert routed.review_reasons == []
     assert "strongest match" in routed.draft_reply
     assert "custom estimate" in routed.draft_reply
     assert "recorded the following" not in routed.draft_reply.casefold()
-    assert "flagged it for a personal review" in routed.draft_reply
+    assert "separate tattoo details together" in routed.draft_reply
 
     whatsapp = TattooRouter(
         llm=cast(ChatOpenAI, FailingLLM()),
@@ -170,7 +169,9 @@ def test_not_sure_is_a_valid_size_answer_and_triggers_staff_help() -> None:
         current_message="I'm not sure.",
         recent_chat_history=history,
     )
-    assert "client_unsure_about_size" in routed.review_reasons
+    assert routed.review_reasons == []
+    assert routed.staff_review_required is False
+    assert routed.telegram_review_required is False
     assert "What size would you prefer" not in routed.draft_reply
 
 
@@ -314,6 +315,23 @@ def test_saved_project_reference_images_remain_fulfilled() -> None:
     assert "reference images" not in extracted.missing_information
 
 
+def test_backend_previous_image_urls_remain_fulfilled() -> None:
+    """The backend's persisted attachment key satisfies reference images."""
+    extracted = _extractor().extract(
+        current_message="It should be a skeleton on my hand.",
+        style_tags=["watercolor"],
+        existing_db_state={
+            "intake": {
+                "previous_image_urls": [
+                    "https://example.com/reference.png",
+                ],
+            }
+        },
+    )
+
+    assert "reference images" not in extracted.missing_information
+
+
 def test_matching_existing_tattoo_email_gets_a_specific_reply() -> None:
     """A partner's existing tattoo and hand-fit sizing are understood."""
     extractor = _extractor()
@@ -376,9 +394,10 @@ def test_matching_existing_tattoo_email_gets_a_specific_reply() -> None:
     assert "size in cm" not in second.missing_information
     assert "reference images" not in second.missing_information
     assert routed.risk_level == "low"
-    assert routed.review_reasons == ["complex_routing_required"]
+    assert routed.review_reasons == []
     assert routed.auto_reply_allowed is True
-    assert routed.telegram_review_required is True
+    assert routed.staff_review_required is False
+    assert routed.telegram_review_required is False
     assert "10-15 cm black-and-grey watercolor Skeleton" in (
         routed.draft_reply
     )

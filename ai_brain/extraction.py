@@ -1503,7 +1503,14 @@ class TattooTextExtractor:
         """Find saved reference images at intake or per-project level."""
         if self._has_state_value(
             existing_db_state,
-            ("reference_images", "image_urls", "images", "references"),
+            (
+                "reference_images",
+                "image_urls",
+                "previous_image_urls",
+                "new_image_urls",
+                "images",
+                "references",
+            ),
         ):
             return True
 

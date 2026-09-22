@@ -558,12 +558,12 @@ class ConversationReplyComposer:
             return ""
         if "existing tattoo" in extracted.complexity_notes.casefold():
             return (
-                "Since this design needs to match an existing tattoo, I've "
-                "flagged it for a personal review by our studio team."
+                "I've noted that this design needs to match an existing "
+                "tattoo so the artist can review that detail carefully."
             )
         return (
-            "Because this request includes multiple tattoo details, I've "
-            "flagged it for a personal review by our studio team."
+            "I've kept the separate tattoo details together so the artist "
+            "can review them accurately."
         )
 
     def _prepend_size_confirmation(
