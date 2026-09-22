@@ -189,14 +189,19 @@ class ConversationReplyComposer:
             current_message=current_message,
             history=history,
         )
+        complexity_notice = self._complexity_notice(extracted)
         if manual_review:
             review_subject = (
                 "the details and pricing" if pricing_requested else "this"
             )
-            reply = (
-                f"{acknowledgement} I'll have the studio team review "
+            reply_parts = [acknowledgement]
+            if complexity_notice:
+                reply_parts.append(complexity_notice)
+            reply_parts.append(
+                "I'll have the studio team review "
                 f"{review_subject} and get back to you."
             )
+            reply = " ".join(reply_parts)
             return self._avoid_exact_repeat(reply, history)
 
         questions = self._select_questions(
@@ -205,6 +210,8 @@ class ConversationReplyComposer:
         )
         if questions:
             reply_parts = [acknowledgement]
+            if complexity_notice:
+                reply_parts.append(complexity_notice)
             if pricing_requested:
                 reply_parts.append(
                     "The studio can confirm the price after reviewing the "
@@ -214,16 +221,23 @@ class ConversationReplyComposer:
             return self._avoid_exact_repeat(reply, history)
 
         if risk_level == "high":
-            reply = (
-                f"{acknowledgement} I'll have the studio team review this "
-                "and get back to you."
+            reply_parts = [acknowledgement]
+            if complexity_notice:
+                reply_parts.append(complexity_notice)
+            reply_parts.append(
+                "I'll have the studio team review this and get back to you."
             )
+            reply = " ".join(reply_parts)
             return self._avoid_exact_repeat(reply, history)
 
-        reply = (
-            f"{acknowledgement} I've got the main details now. "
-            "I'll pass this to the team for a quick review."
+        reply_parts = [acknowledgement]
+        if complexity_notice:
+            reply_parts.append(complexity_notice)
+        reply_parts.append(
+            "I've got the main details now. I'll pass this to the team for "
+            "a quick review."
         )
+        reply = " ".join(reply_parts)
         return self._avoid_exact_repeat(reply, history)
 
     def compose_validation(
@@ -277,11 +291,12 @@ class ConversationReplyComposer:
         reply_parts = []
         if _POSSIBLE_PATTERN.search(current_message):
             reply_parts.append("Yes, we can help with that.")
-        reply_parts.extend(
-            [
-                summary,
-                "Does that sound right, or would you like to change anything?",
-            ]
+        reply_parts.append(summary)
+        complexity_notice = self._complexity_notice(extracted)
+        if complexity_notice:
+            reply_parts.append(complexity_notice)
+        reply_parts.append(
+            "Does that sound right, or would you like to change anything?"
         )
         if pricing_requested:
             reply_parts.append(
@@ -343,6 +358,10 @@ class ConversationReplyComposer:
         if request_summary:
             sections.append(request_summary)
 
+        complexity_notice = self._complexity_notice(extracted)
+        if complexity_notice:
+            sections.append(complexity_notice)
+
         if (
             extracted.artist_preference_mode == "recommend"
             and suggested_artist != "Unclear"
@@ -365,13 +384,12 @@ class ConversationReplyComposer:
             )
             if questions:
                 intro = (
-                    "To help us move this forward, could you let me know:"
+                    "To help us move this forward, could you share a little "
+                    "more detail?"
                     if not is_follow_up
-                    else "A little more detail would help us move forward:"
+                    else "A little more detail would help us move forward."
                 )
-                sections.append(
-                    intro + "\n" + "\n".join(f"- {item}" for item in questions)
-                )
+                sections.append(" ".join([intro, *questions]))
             sections.append(
                 "Once we have those details, we'll guide you through the next "
                 "step."
@@ -462,6 +480,18 @@ class ConversationReplyComposer:
             f" on your {extracted.placement}" if extracted.placement else ""
         )
         return f"It sounds like you'd like a {design}{placement}."
+
+    def _complexity_notice(
+        self,
+        extracted: TattooExtractionDraft,
+    ) -> str:
+        """Return a natural staff-review notice for complex requests."""
+        if not extracted.multi_entity_detected:
+            return ""
+        return (
+            "Because this request includes multiple tattoo details, I've "
+            "flagged it for a personal review by our studio team."
+        )
 
     def _project_phrase(self, project: object, index: int) -> str:
         """Create one compact, client-facing phrase for a tattoo project."""
