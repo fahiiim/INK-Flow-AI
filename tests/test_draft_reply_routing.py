@@ -313,3 +313,34 @@ def test_valid_natural_outlook_model_reply_is_used() -> None:
 
     assert result.draft_reply == natural_reply
     assert len(fake_llm.calls) == 2
+
+
+def test_generic_completed_outlook_reply_uses_detailed_fallback() -> None:
+    """Completed intake cannot degrade into a context-free handoff email."""
+    generic_reply = (
+        "Dear Samim,\n\nThank you for your message. Our team is reviewing "
+        "your request. We'll get back to you shortly.\n\nKind regards,\n"
+        "Tattoo Hysteria"
+    )
+    fake_llm = SequentialLLM(
+        [
+            _reasoning_response(),
+            json.dumps({"draft_reply": generic_reply}),
+        ]
+    )
+
+    result = TattooRouter(
+        llm=cast(ChatOpenAI, fake_llm),
+        vector_store=_warm_vector_store(),
+    ).route(
+        extracted=_fully_complete_draft(),
+        current_message="It is a new tattoo.",
+        recent_chat_history=[],
+        existing_db_state={"lead": {"name": "Samim Osman"}},
+        message_source="outlook",
+    )
+
+    assert result.draft_reply != generic_reply
+    assert "fine-line lotus" in result.draft_reply.casefold()
+    assert "inner wrist" in result.draft_reply
+    assert "studio team will review everything" in result.draft_reply

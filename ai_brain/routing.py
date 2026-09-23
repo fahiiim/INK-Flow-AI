@@ -350,6 +350,13 @@ class TattooRouter:
             raise ValueError("Draft reply exposes invalid or robotic wording.")
         if extracted.conversation_status == "closed" and "?" in reply:
             raise ValueError("Closed inquiries cannot contain questions.")
+        if (
+            not extracted.missing_information
+            and not self._mentions_confirmed_intake_detail(reply, extracted)
+        ):
+            raise ValueError(
+                "Completed-intake draft does not confirm any client details."
+            )
         repeated_fields = self._questions_for_completed_fields(reply, extracted)
         if repeated_fields:
             raise ValueError(
@@ -366,6 +373,38 @@ class TattooRouter:
             if "tattoo hysteria" not in normalized:
                 raise ValueError("Outlook draft is missing the studio name.")
         return reply
+
+    def _mentions_confirmed_intake_detail(
+        self,
+        draft_reply: str,
+        extracted: TattooExtractionDraft,
+    ) -> bool:
+        """Require completed-intake replies to reflect known client context."""
+        normalized_reply = " ".join(draft_reply.casefold().split())
+        values = (
+            extracted.tattoo_idea,
+            extracted.placement,
+            extracted.size_estimate_cm,
+            extracted.date,
+            extracted.time,
+            extracted.preferred_artist,
+            extracted.appointment_type.replace("_", " "),
+            extracted.tattoo_project_type,
+        )
+        meaningful_values = [
+            " ".join(value.casefold().split())
+            for value in values
+            if value and len(" ".join(value.split())) >= 3
+        ]
+        style_values = [
+            style.casefold()
+            for style in extracted.style_tags
+            if style != "unknown"
+        ]
+        return any(
+            value in normalized_reply
+            for value in [*meaningful_values, *style_values]
+        )
 
     def _questions_for_completed_fields(
         self,

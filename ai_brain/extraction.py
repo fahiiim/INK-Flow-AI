@@ -85,12 +85,81 @@ _COMPLAINT_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 _COMPLEX_ROUTING_NOTE = "Complex routing required"
+_DEFAULT_PLACEMENT_SIZE_RANGE = "5-20 cm"
+_PLACEMENT_SIZE_RANGES: dict[str, str] = {
+    "scalp": "5-20 cm",
+    "head": "5-20 cm",
+    "temple": "2-8 cm",
+    "face": "2-10 cm",
+    "eyebrow": "1-5 cm",
+    "eyelid": "1-4 cm",
+    "lip": "1-4 cm",
+    "ear": "1-5 cm",
+    "behind the ear": "2-6 cm",
+    "neck": "5-15 cm",
+    "throat": "5-15 cm",
+    "nape": "5-15 cm",
+    "collarbone": "8-20 cm",
+    "shoulder": "8-20 cm",
+    "shoulder blade": "10-25 cm",
+    "armpit": "5-15 cm",
+    "chest": "10-25 cm",
+    "sternum": "8-20 cm",
+    "breast": "5-20 cm",
+    "rib cage": "10-30 cm",
+    "side": "10-30 cm",
+    "stomach": "10-30 cm",
+    "abdomen": "10-30 cm",
+    "waist": "8-25 cm",
+    "back": "15-35 cm",
+    "upper back": "15-35 cm",
+    "lower back": "10-30 cm",
+    "spine": "10-35 cm",
+    "arm": "8-20 cm",
+    "upper arm": "8-20 cm",
+    "lower arm": "8-20 cm",
+    "bicep": "8-20 cm",
+    "tricep": "8-20 cm",
+    "elbow": "5-12 cm",
+    "forearm": "8-20 cm",
+    "inner forearm": "8-20 cm",
+    "outer forearm": "8-20 cm",
+    "wrist": "3-8 cm",
+    "inner wrist": "3-8 cm",
+    "outer wrist": "3-8 cm",
+    "hand": "10-15 cm",
+    "palm": "8-10 cm",
+    "finger": "1-5 cm",
+    "knuckle": "1-4 cm",
+    "hip": "8-20 cm",
+    "groin": "5-15 cm",
+    "buttock": "10-25 cm",
+    "thigh": "12-30 cm",
+    "knee": "8-18 cm",
+    "kneecap": "8-15 cm",
+    "leg": "10-30 cm",
+    "calf": "10-25 cm",
+    "shin": "10-25 cm",
+    "ankle": "3-10 cm",
+    "foot": "5-15 cm",
+    "toe": "1-4 cm",
+}
 _QUALITATIVE_SIZE_RANGES: dict[str, str] = {
     "hand-sized": "10-15 cm",
     "palm-sized": "8-10 cm",
+    "full-chest": "30-40 cm",
+    "full-back": "35-60 cm",
+    "full-sleeve": "45-65 cm",
+    "half-sleeve": "20-35 cm",
+    "full-leg": "50-90 cm",
+    "half-leg": "25-45 cm",
     "credit-card-sized": "8-9 cm",
     "coin-sized": "2-3 cm",
     "matchbox-sized": "5-6 cm",
+    **{
+        f"{placement}-sized": size_range
+        for placement, size_range in _PLACEMENT_SIZE_RANGES.items()
+    },
 }
 _NAMED_COLOR_PATTERN = re.compile(
     r"\b(?:red|blue|green|yellow|purple|orange|pink|black|white)\b",
@@ -201,27 +270,71 @@ _STYLE_TEXT_ALIASES: dict[StyleTag, tuple[str, ...]] = {
 _PLACEMENT_ALIASES: tuple[tuple[str, str], ...] = (
     ("behind the ear", "behind the ear"),
     ("behind my ear", "behind the ear"),
+    ("shoulder blade", "shoulder blade"),
     ("inner forearm", "inner forearm"),
     ("outer forearm", "outer forearm"),
     ("inner wrist", "inner wrist"),
     ("outer wrist", "outer wrist"),
     ("upper arm", "upper arm"),
     ("lower arm", "lower arm"),
-    ("shoulder blade", "shoulder blade"),
+    ("upper back", "upper back"),
+    ("lower back", "lower back"),
     ("rib cage", "rib cage"),
+    ("ribcage", "rib cage"),
+    ("ribs", "rib cage"),
     ("collarbone", "collarbone"),
     ("forearm", "forearm"),
     ("sternum", "sternum"),
     ("shoulder", "shoulder"),
+    ("abdomen", "abdomen"),
+    ("stomach", "stomach"),
+    ("spine", "spine"),
+    ("armpit", "armpit"),
+    ("bicep", "bicep"),
+    ("biceps", "bicep"),
+    ("tricep", "tricep"),
+    ("triceps", "tricep"),
+    ("elbow", "elbow"),
     ("wrist", "wrist"),
+    ("knuckles", "knuckle"),
+    ("knuckle", "knuckle"),
+    ("fingers", "finger"),
+    ("finger", "finger"),
+    ("palm", "palm"),
     ("ankle", "ankle"),
     ("chest", "chest"),
+    ("breast", "breast"),
     ("thigh", "thigh"),
+    ("kneecap", "kneecap"),
+    ("knee", "knee"),
     ("calf", "calf"),
+    ("shin", "shin"),
     ("back", "back"),
     ("neck", "neck"),
+    ("throat", "throat"),
+    ("nape", "nape"),
+    ("scalp", "scalp"),
+    ("temple", "temple"),
+    ("eyebrow", "eyebrow"),
+    ("eyelid", "eyelid"),
+    ("face", "face"),
+    ("head", "head"),
+    ("ears", "ear"),
+    ("ear", "ear"),
+    ("lips", "lip"),
+    ("lip", "lip"),
     ("hand", "hand"),
     ("foot", "foot"),
+    ("feet", "foot"),
+    ("toes", "toe"),
+    ("toe", "toe"),
+    ("waist", "waist"),
+    ("hips", "hip"),
+    ("hip", "hip"),
+    ("groin", "groin"),
+    ("buttocks", "buttock"),
+    ("buttock", "buttock"),
+    ("side", "side"),
     ("arm", "arm"),
     ("leg", "leg"),
 )
@@ -972,8 +1085,18 @@ class TattooTextExtractor:
             recent_chat_history=recent_chat_history,
             existing_db_state=existing_db_state,
         )
+        placement = self._resolve_context_field(
+            llm_value=llm_output.placement,
+            current_message=current_message,
+            recent_chat_history=recent_chat_history,
+            existing_db_state=existing_db_state,
+            state_keys=("placement",),
+            value_extractor=self._extract_placement_from_text,
+            field_terms=_PLACEMENT_FIELD_TERMS,
+        )
         size_description = self._resolve_size_description(
             llm_value=llm_output.size_description,
+            placement=placement,
             current_message=current_message,
             recent_chat_history=recent_chat_history,
             existing_db_state=existing_db_state,
@@ -998,15 +1121,7 @@ class TattooTextExtractor:
                 recent_chat_history=recent_chat_history,
                 existing_db_state=existing_db_state,
             ),
-            placement=self._resolve_context_field(
-                llm_value=llm_output.placement,
-                current_message=current_message,
-                recent_chat_history=recent_chat_history,
-                existing_db_state=existing_db_state,
-                state_keys=("placement",),
-                value_extractor=self._extract_placement_from_text,
-                field_terms=_PLACEMENT_FIELD_TERMS,
-            ),
+            placement=placement,
             size_estimate_cm=size_estimate_cm,
             color_preference=self._resolve_context_field(
                 llm_value=llm_output.color_preference,
@@ -1407,6 +1522,7 @@ class TattooTextExtractor:
     def _resolve_size_description(
         self,
         llm_value: str,
+        placement: str,
         current_message: str,
         recent_chat_history: list[Message],
         existing_db_state: dict[str, Any],
@@ -1414,6 +1530,10 @@ class TattooTextExtractor:
         """Resolve qualitative or explicitly uncertain size answers."""
         current_value = self._extract_size_description(current_message)
         if current_value:
+            if current_value == "not sure":
+                placement_value = self._placement_size_description(placement)
+                if placement_value:
+                    return placement_value
             return current_value
         if self._extract_size_from_text(current_message):
             return ""
@@ -1794,7 +1914,11 @@ class TattooTextExtractor:
         if quoted_wording:
             return quoted_wording
 
+        reference_idea = self._extract_reference_based_idea(normalized)
+
         candidates: list[tuple[int, str]] = []
+        if reference_idea:
+            candidates.append((0, reference_idea))
         idea_patterns = (
             re.compile(
                 r"\b(?:tattoo\s+)?(?:idea|concept|design|background story)"
@@ -1851,6 +1975,30 @@ class TattooTextExtractor:
             return ""
         return max(usable, key=lambda item: item[0])[1]
 
+    def _extract_reference_based_idea(self, text: str) -> str:
+        """Recognize a clearly named tattoo reference as a usable concept."""
+        patterns = (
+            re.compile(
+                r"\b(?:look|looks|looking)\s+like\s+"
+                r"(?P<reference>[A-Z][A-Za-z'\u2019-]+(?:\s+"
+                r"[A-Z][A-Za-z'\u2019-]+){0,3})(?:'s|\u2019s)\s+"
+                r"(?:one|tattoo|design)\b",
+            ),
+            re.compile(
+                r"\b(?:inspired\s+by|based\s+on)\s+"
+                r"(?P<reference>[A-Z][A-Za-z'\u2019-]+(?:\s+"
+                r"[A-Z][A-Za-z'\u2019-]+){0,3})(?:'s|\u2019s)?\s+"
+                r"(?:tattoo|design)\b",
+            ),
+        )
+        for pattern in patterns:
+            match = pattern.search(text)
+            if match is None:
+                continue
+            reference = " ".join(match.group("reference").split())
+            return f"{reference}-inspired design"
+        return ""
+
     def _extract_quoted_wording_idea(self, text: str) -> str:
         """Preserve explicitly quoted tattoo wording as one complete concept."""
         matches = list(
@@ -1892,6 +2040,26 @@ class TattooTextExtractor:
     def _clean_tattoo_idea_candidate(self, value: str) -> str:
         """Normalize a short extracted concept and reject generic wording."""
         candidate = " ".join(value.split())
+        candidate = re.sub(
+            r"^(?:(?:it(?:'s|\s+is)|this\s+is)\s+)?"
+            r"(?:basically|actually|just)\s+",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        candidate = re.sub(
+            r"\bfeathres?\b",
+            "feathers",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        candidate = re.sub(
+            r"\b(?:the\s+)?eagle(?:'s|s)?\s+"
+            r"(?:fins?\s*/\s*)?feathers\b",
+            "eagle feathers",
+            candidate,
+            flags=re.IGNORECASE,
+        )
         candidate = re.split(
             r"\s+(?:on|for)\s+(?:my|the)\b|\s+instead\b",
             candidate,
@@ -1972,6 +2140,26 @@ class TattooTextExtractor:
                 r"(?:a|my|the|your)\s+palm)\b",
                 "palm-sized",
             ),
+            (
+                r"\b(?:full[- ]?chest|whole\s+chest|entire\s+chest|"
+                r"across\s+(?:my|the|your)\s+(?:whole\s+)?chest|"
+                r"cover(?:s|ing)?\s+(?:my|the|your)\s+(?:both|whole|"
+                r"entire|full)\s+chest)\b",
+                "full-chest",
+            ),
+            (
+                r"\b(?:full[- ]?back|whole\s+back|entire\s+back|"
+                r"cover(?:s|ing)?\s+(?:my|the|your)\s+(?:whole|entire|"
+                r"full)\s+back)\b",
+                "full-back",
+            ),
+            (r"\bfull[- ]?sleeve\b", "full-sleeve"),
+            (r"\bhalf[- ]?sleeve\b", "half-sleeve"),
+            (
+                r"\b(?:full[- ]?leg|whole\s+leg|entire\s+leg)\b",
+                "full-leg",
+            ),
+            (r"\bhalf[- ]?leg\b", "half-leg"),
             (r"\bcredit[- ]?card[- ]?sized?\b", "credit-card-sized"),
             (r"\bcoin[- ]?sized?\b", "coin-sized"),
             (r"\bmatchbox[- ]?sized?\b", "matchbox-sized"),
@@ -1979,12 +2167,51 @@ class TattooTextExtractor:
         for pattern, description in descriptions:
             if re.search(pattern, normalized):
                 return description
+
+        placement = self._extract_placement_from_text(normalized)
+        if placement and self._placement_is_used_as_size(
+            text=normalized,
+            placement=placement,
+        ):
+            return self._placement_size_description(placement)
         if self._is_uncertain_answer(normalized) and re.search(
             r"\b(?:size|large|big|small|centimet|\bcm\b)\b",
             normalized,
         ):
+            placement_description = self._placement_size_description(placement)
+            if placement_description:
+                return placement_description
             return "not sure"
         return ""
+
+    def _placement_is_used_as_size(self, text: str, placement: str) -> bool:
+        """Detect when a body area describes coverage rather than location."""
+        aliases = [
+            alias
+            for alias, canonical in _PLACEMENT_ALIASES
+            if canonical == placement
+        ]
+        alias_pattern = "|".join(
+            re.escape(alias) for alias in sorted(aliases, key=len, reverse=True)
+        )
+        if not alias_pattern:
+            return False
+        patterns = (
+            rf"\b(?:{alias_pattern})[- ]sized?\b",
+            rf"\bsize\s+of\s+(?:a|my|the|your)\s+(?:{alias_pattern})\b",
+            rf"\bcover(?:s|ing)?\s+(?:my|the|your)\s+"
+            rf"(?:whole\s+|entire\s+|full\s+|both\s+)?"
+            rf"(?:{alias_pattern})\b",
+            rf"\bacross\s+(?:my|the|your)\s+(?:{alias_pattern})\b",
+        )
+        return any(re.search(pattern, text) for pattern in patterns)
+
+    def _placement_size_description(self, placement: str) -> str:
+        """Return a stable qualitative key for any resolved body placement."""
+        normalized = " ".join(placement.casefold().split())
+        if not normalized:
+            return ""
+        return f"{normalized}-sized"
 
     def _infer_size(
         self,
@@ -1995,14 +2222,20 @@ class TattooTextExtractor:
         if not self._is_blank(size_estimate_cm):
             return size_estimate_cm
         normalized = " ".join(size_description.casefold().split())
-        return _QUALITATIVE_SIZE_RANGES.get(normalized, "")
+        configured_range = _QUALITATIVE_SIZE_RANGES.get(normalized)
+        if configured_range:
+            return configured_range
+        if normalized.endswith("-sized"):
+            return _DEFAULT_PLACEMENT_SIZE_RANGE
+        return ""
 
     def _is_uncertain_answer(self, text: str) -> bool:
         """Detect an explicit statement that the client does not know."""
         normalized = " ".join(text.casefold().split())
         return bool(
             re.search(
-                r"\b(?:not sure|unsure|do not know|don't know|dont know|"
+                r"\b(?:not sure|unsure|"
+                r"(?:do not|don't|dont)\s+(?:really\s+|exactly\s+)?know|"
                 r"no idea|you decide|please advise)\b",
                 normalized,
             )
@@ -2394,7 +2627,12 @@ class TattooTextExtractor:
     def _extract_placement_from_text(self, text: str) -> str:
         """Extract the latest positively stated common body placement."""
         normalized = text.casefold()
-        matches: list[tuple[int, str]] = []
+        normalized = re.sub(
+            r'["\u201c][^"\u201d\n]{1,500}["\u201d]',
+            " ",
+            normalized,
+        )
+        matches: list[tuple[int, int, str]] = []
         for alias, canonical in _PLACEMENT_ALIASES:
             pattern = rf"\b{re.escape(alias)}\b"
             for match in re.finditer(pattern, normalized):
@@ -2405,10 +2643,20 @@ class TattooTextExtractor:
                 ):
                     continue
                 if not self._phrase_is_negated(normalized, match.start()):
-                    matches.append((match.start(), canonical))
+                    matches.append((match.start(), match.end(), canonical))
         if not matches:
             return ""
-        return max(matches, key=lambda item: item[0])[1]
+        specific_matches = [
+            candidate
+            for candidate in matches
+            if not any(
+                other[0] <= candidate[0]
+                and other[1] >= candidate[1]
+                and (other[1] - other[0]) > (candidate[1] - candidate[0])
+                for other in matches
+            )
+        ]
+        return max(specific_matches, key=lambda item: item[0])[2]
 
     def _extract_color_from_text(self, text: str) -> str:
         """Normalize an explicit latest-message color preference."""

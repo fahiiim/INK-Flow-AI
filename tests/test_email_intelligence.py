@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from typing import cast
 
+import pytest
 from langchain_openai import ChatOpenAI
 
-from ai_brain.extraction import TattooTextExtractor
+from ai_brain.extraction import (
+    _PLACEMENT_ALIASES,
+    _PLACEMENT_SIZE_RANGES,
+    TattooTextExtractor,
+)
 from ai_brain.routing import TattooRouter
 from ai_brain.schemas import Message
 
@@ -56,11 +61,12 @@ def test_multiple_stars_and_size_uncertainty_are_separate_fields() -> None:
 
     assert result.tattoo_idea == "Multiple stars"
     assert result.placement == "neck"
-    assert result.size_description == "not sure"
-    assert result.size_estimate_cm == ""
+    assert result.size_description == "neck-sized"
+    assert result.size_estimate_cm == "5-15 cm"
     assert result.client_intent == "size_guidance"
     assert result.pricing_requested is True
     assert "tattoo idea" not in result.missing_information
+    assert "size in cm" not in result.missing_information
 
 
 def test_standalone_black_is_normalized_as_black_and_grey() -> None:
@@ -148,3 +154,149 @@ def test_visual_subject_can_recover_an_image_only_concept() -> None:
 
     assert result.tattoo_idea == "Three outline stars"
     assert "tattoo idea" not in result.missing_information
+
+
+def test_full_chest_reference_request_resolves_concept_and_size() -> None:
+    """A named reference and chest-spanning size are useful intake details."""
+    result = _extractor().extract(
+        current_message=(
+            "I wanna copy a tattoo on my chest that will look like Conor "
+            "McGregor's one. I don't really know the size. It will cover my "
+            "both chest, and the tattoo will be colorful."
+        ),
+        style_tags=["unknown"],
+        new_image_urls=["https://example.com/chest-reference.jpg"],
+        existing_db_state={"lead": {"name": "Fahim Sarker"}},
+    )
+
+    assert result.tattoo_idea == "Conor McGregor-inspired design"
+    assert result.placement == "chest"
+    assert result.size_description == "full-chest"
+    assert result.size_estimate_cm == "30-40 cm"
+    assert result.size_status == "approximate"
+    assert result.color_preference == "color"
+    assert "tattoo idea" not in result.missing_information
+    assert "size in cm" not in result.missing_information
+    assert "reference images" not in result.missing_information
+
+
+def test_explicit_eagle_idea_drops_fillers_and_corrects_obvious_typo() -> None:
+    """Conversational filler and an obvious feather typo stay out of state."""
+    result = _extractor().extract(
+        current_message=(
+            "The tattoo idea is basically the eagles fins/feathres."
+        ),
+        style_tags=["traditional"],
+        existing_db_state={
+            "lead": {"name": "Fahim Sarker"},
+            "intake": {
+                "tattoo_idea": "Conor McGregor-inspired design",
+                "placement": "chest",
+                "size_description": "full-chest",
+            },
+        },
+    )
+
+    assert result.tattoo_idea == "Eagle feathers"
+    assert result.placement == "chest"
+    assert result.size_estimate_cm == "30-40 cm"
+
+
+def test_every_supported_body_placement_has_a_planning_range() -> None:
+    """Every placement alias must resolve to a configured centimetre range."""
+    supported_placements = {
+        canonical for _, canonical in _PLACEMENT_ALIASES
+    }
+
+    assert supported_placements <= set(_PLACEMENT_SIZE_RANGES)
+
+
+@pytest.mark.parametrize(
+    ("message", "placement", "description", "size_range"),
+    [
+        (
+            "I don't know the size; it will be on my scalp.",
+            "scalp",
+            "scalp-sized",
+            "5-20 cm",
+        ),
+        (
+            "I don't know the size; it will be behind the ear.",
+            "behind the ear",
+            "behind the ear-sized",
+            "2-6 cm",
+        ),
+        (
+            "I don't know the size; it will be on my upper back.",
+            "upper back",
+            "upper back-sized",
+            "15-35 cm",
+        ),
+        (
+            "I don't know the size; it will be on my forearm.",
+            "forearm",
+            "forearm-sized",
+            "8-20 cm",
+        ),
+        (
+            "I don't know the size; it will be on my finger.",
+            "finger",
+            "finger-sized",
+            "1-5 cm",
+        ),
+        (
+            "I don't know the size; it will be over my ribs.",
+            "rib cage",
+            "rib cage-sized",
+            "10-30 cm",
+        ),
+        (
+            "I don't know the size; it will be on my thigh.",
+            "thigh",
+            "thigh-sized",
+            "12-30 cm",
+        ),
+        (
+            "I don't know the size; it will be on my foot.",
+            "foot",
+            "foot-sized",
+            "5-15 cm",
+        ),
+    ],
+)
+def test_unknown_size_uses_body_placement_planning_range(
+    message: str,
+    placement: str,
+    description: str,
+    size_range: str,
+) -> None:
+    """Unknown sizes receive conservative placement-aware ranges."""
+    result = _extractor().extract(
+        current_message=message,
+        style_tags=["unknown"],
+        existing_db_state={"lead": {"name": "Fahim Sarker"}},
+    )
+
+    assert result.placement == placement
+    assert result.size_description == description
+    assert result.size_estimate_cm == size_range
+    assert result.size_status == "approximate"
+    assert "size in cm" not in result.missing_information
+
+
+def test_unlisted_body_placement_receives_safe_fallback_range() -> None:
+    """A model-resolved placement outside the catalog still gets guidance."""
+    result = _extractor().extract(
+        current_message="I don't know the exact size.",
+        style_tags=["unknown"],
+        existing_db_state={
+            "lead": {"name": "Fahim Sarker"},
+            "intake": {"placement": "Achilles tendon"},
+        },
+    )
+
+    assert result.placement == "Achilles tendon"
+    assert result.size_description == "achilles tendon-sized"
+    assert result.size_estimate_cm == "5-20 cm"
+    assert result.size_status == "approximate"
+    assert "size in cm" not in result.missing_information
