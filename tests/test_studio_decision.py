@@ -46,6 +46,8 @@ class StaticTextExtractor:
         current_message: str,
         style_tags: list[str],
         visual_color_preference: str = "unknown",
+        visual_subjects: list[str] | None = None,
+        visual_description: str = "",
         new_image_urls: list[str] | None = None,
         existing_db_state: dict[str, object] | None = None,
         recent_chat_history: list[Message] | None = None,
