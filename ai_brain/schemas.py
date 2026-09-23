@@ -96,10 +96,21 @@ ArtistPreferenceMode = Literal[
     "no_preference",
     "unknown",
 ]
+ClientIntent = Literal[
+    "continue_intake",
+    "pricing_question",
+    "size_guidance",
+    "artist_guidance",
+    "availability_question",
+    "complaint",
+    "withdrawal",
+]
+ConversationStatus = Literal["active", "closed"]
 IntakeStatus = Literal[
     "collecting_info",
     "needs_staff_review",
     "ready_for_review",
+    "closed",
 ]
 PreferredArtist = Literal[
     "",
@@ -281,12 +292,14 @@ class TattooInquiryInput(BaseModel):
 
 
 class TattooVisionOutput(BaseModel):
-    """Strict style and color signals extracted from reference images."""
+    """Strict visual signals extracted from client reference images."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     style_tags: list[StyleTag] = Field(min_length=1)
     color_preference: VisualColorPreference
+    design_subjects: list[str] = Field(default_factory=list, max_length=10)
+    visual_description: str = Field(default="", max_length=500)
 
 
 class TattooProjectDetail(BaseModel):
@@ -385,6 +398,8 @@ class TattooExtractionDraft(BaseModel):
     size_status: SizeStatus = "unknown"
     artist_preference_mode: ArtistPreferenceMode = "unknown"
     pricing_requested: bool = False
+    client_intent: ClientIntent = "continue_intake"
+    conversation_status: ConversationStatus = "active"
     missing_information: list[MissingInformationItem] = Field(
         default_factory=list,
         description=(
@@ -474,6 +489,8 @@ class AIExtractionOutput(BaseModel):
     size_status: SizeStatus = "unknown"
     artist_preference_mode: ArtistPreferenceMode = "unknown"
     pricing_requested: bool = False
+    client_intent: ClientIntent = "continue_intake"
+    conversation_status: ConversationStatus = "active"
     intake_status: IntakeStatus = "collecting_info"
     staff_review_required: bool = False
     review_reasons: list[str] = Field(default_factory=list, max_length=20)
