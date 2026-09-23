@@ -163,6 +163,8 @@ jobs:
           test -n "${OPENAI_API_KEY}"
           {
             printf 'OPENAI_API_KEY=%s\n' "${OPENAI_API_KEY}"
+            printf 'OPENAI_MODEL=gpt-6-astra\n'
+            printf 'OPENAI_REASONING_EFFORT=low\n'
             printf 'OPENAI_TEMPERATURE=0.0\n'
             printf 'OPENAI_TIMEOUT_SECONDS=30\n'
             printf 'OPENAI_MAX_RETRIES=2\n'
