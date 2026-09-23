@@ -34,7 +34,7 @@ class TattooVisionAnalyzer:
     def __init__(
         self,
         llm: ChatOpenAI | None = None,
-        model_name: str = "gpt-4o",
+        model_name: str | None = None,
         timeout_seconds: float = 20.0,
     ) -> None:
         self._llm = llm or get_chat_model(model_name=model_name)
@@ -148,9 +148,13 @@ class TattooVisionAnalyzer:
         if isinstance(parsed, list):
             raw_tags = parsed
             raw_color = "unknown"
+            raw_subjects: Any = []
+            raw_description: Any = ""
         elif isinstance(parsed, dict):
             raw_tags = parsed.get("style_tags", [])
             raw_color = parsed.get("color_preference", "unknown")
+            raw_subjects = parsed.get("design_subjects", [])
+            raw_description = parsed.get("visual_description", "")
         else:
             return self._unknown_output()
 
@@ -175,7 +179,30 @@ class TattooVisionAnalyzer:
         return TattooVisionOutput(
             style_tags=cast(list[StyleTag], cleaned),
             color_preference=color,
+            design_subjects=self._normalize_subjects(raw_subjects),
+            visual_description=self._normalize_description(raw_description),
         )
+
+    def _normalize_subjects(self, raw_subjects: Any) -> list[str]:
+        """Return unique, concise visual subjects from model output."""
+        if not isinstance(raw_subjects, list):
+            return []
+        subjects: list[str] = []
+        for item in raw_subjects:
+            if not isinstance(item, str):
+                continue
+            normalized = " ".join(item.split()).strip(" .,-")[:80]
+            if normalized and normalized.casefold() not in {
+                value.casefold() for value in subjects
+            }:
+                subjects.append(normalized)
+        return subjects[:10]
+
+    def _normalize_description(self, raw_description: Any) -> str:
+        """Return one bounded factual image description."""
+        if not isinstance(raw_description, str):
+            return ""
+        return " ".join(raw_description.split())[:500]
 
     def _load_json_payload(self, raw_text: str) -> Any:
         """Load a JSON object, with support for fenced explanatory output."""
@@ -217,4 +244,6 @@ class TattooVisionAnalyzer:
         return TattooVisionOutput(
             style_tags=["unknown"],
             color_preference="unknown",
+            design_subjects=[],
+            visual_description="",
         )
