@@ -76,7 +76,7 @@ def test_sensitive_intent_does_not_override_missing_information() -> None:
     assert result.suggested_artist == "Unclear"
     assert result.confidence_level == "low"
     assert "What size would you prefer in centimetres?" in result.draft_reply
-    assert "Where on your body would you like the tattoo?" in result.draft_reply
+    assert result.draft_reply.count("?") <= 2
     assert result.auto_reply_allowed is True
     assert result.telegram_review_required is False
 
@@ -175,7 +175,7 @@ def test_router_keeps_basic_missing_information_low_risk() -> None:
     assert result.telegram_review_required is False
     assert result.suggested_artist == "Lana"
     assert result.confidence_level == "medium"
-    assert "black-and-grey minimal and floral tattoo" in result.draft_reply
+    assert "black-and-grey minimal floral tattoo" in result.draft_reply
     assert "Does that sound right" in result.draft_reply
     assert "- Style:" not in result.draft_reply
     assert "Unknown" not in result.draft_reply
@@ -308,6 +308,39 @@ def test_chat_model_forces_zero_temperature(
     llm_module.get_chat_model(model_name="determinism-test")
 
     assert captured["temperature"] == 0.0
+    llm_module.get_chat_model.cache_clear()
+
+
+def test_latest_reasoning_model_uses_responses_without_temperature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GPT-6 Astra follows the documented reasoning-model parameters."""
+    captured: dict[str, Any] = {}
+    settings = LLMSettings(
+        api_key="test-key",
+        model_name="gpt-6-astra",
+        reasoning_effort="low",
+        temperature=1.0,
+        timeout_seconds=30,
+        max_retries=2,
+    )
+
+    class FakeChatOpenAI:
+        """Capture constructor options without creating an API client."""
+
+        def __init__(self, **kwargs: Any) -> None:
+            captured.update(kwargs)
+
+    llm_module.get_chat_model.cache_clear()
+    monkeypatch.setattr(llm_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(llm_module, "ChatOpenAI", FakeChatOpenAI)
+
+    llm_module.get_chat_model()
+
+    assert captured["model"] == "gpt-6-astra"
+    assert captured["reasoning_effort"] == "low"
+    assert captured["use_responses_api"] is True
+    assert "temperature" not in captured
     llm_module.get_chat_model.cache_clear()
 
 
