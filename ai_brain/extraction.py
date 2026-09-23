@@ -22,6 +22,8 @@ from .prompts import EXTRACTION_SYSTEM_PROMPT, build_extraction_human_prompt
 from .schemas import (
     AppointmentType,
     ArtistPreferenceMode,
+    ClientIntent,
+    ConversationStatus,
     MISSING_INFORMATION_OPTIONS,
     STYLE_TAG_OPTIONS,
     Message,
@@ -46,6 +48,40 @@ _STYLE_TAGS_THAT_RESOLVE_PREFERENCE = _STYLE_TAG_SET - {
 _MISSING_SET = set(MISSING_INFORMATION_OPTIONS)
 _PRICING_PATTERN = re.compile(
     r"\b(?:price|pricing|cost|quote|how much|budget)\b",
+    flags=re.IGNORECASE,
+)
+_WITHDRAWAL_PATTERN = re.compile(
+    r"\b(?:i(?:'m|\s+am)?\s+no\s+longer\s+interested|"
+    r"i(?:'m|\s+am)?\s+not\s+interested\s+anymore|"
+    r"never\s*mind|forget\s+it|do\s+not\s+proceed|don't\s+proceed|"
+    r"dont\s+proceed|stop\s+(?:this|the)\s+(?:inquiry|request)|"
+    r"close\s+(?:this|my)\s+(?:inquiry|request))\b",
+    flags=re.IGNORECASE,
+)
+_REOPEN_PATTERN = re.compile(
+    r"\b(?:i\s+changed\s+my\s+mind|i(?:'d|\s+would)\s+like\s+to\s+"
+    r"continue|please\s+reopen|let(?:'s|\s+us)\s+continue)\b",
+    flags=re.IGNORECASE,
+)
+_ARTIST_GUIDANCE_INTENT_PATTERN = re.compile(
+    r"\b(?:recommend|suggest|best|better|which\s+artist|who\s+would|"
+    r"portfolio|speciali[sz]|tell\s+me\s+about)\b",
+    flags=re.IGNORECASE,
+)
+_AVAILABILITY_QUESTION_PATTERN = re.compile(
+    r"\b(?:what|which|when)\b.{0,45}\b(?:available|availability|open|"
+    r"slots?|appointments?)\b",
+    flags=re.IGNORECASE,
+)
+_SIZE_GUIDANCE_PATTERN = re.compile(
+    r"\b(?:suggest|recommend|advise|help)\b.{0,35}\b(?:size|large|big)\b|"
+    r"\bsize\b.{0,50}\b(?:suggest|recommend|advise|help)\b|"
+    r"\b(?:what|which)\s+size\b.{0,35}\b(?:recommend|suggest|best)\b",
+    flags=re.IGNORECASE,
+)
+_COMPLAINT_PATTERN = re.compile(
+    r"\b(?:i\s+said|already\s+(?:said|told)|how\s+many\s+times|"
+    r"why\s+are\s+you\s+asking|not\s+listening|frustrated|upset)\b",
     flags=re.IGNORECASE,
 )
 _COMPLEX_ROUTING_NOTE = "Complex routing required"
@@ -314,6 +350,8 @@ _TATTOO_SUBJECT_WORDS = (
     "skeleton art",
     "skull",
     "snake",
+    "star",
+    "stars",
     "symbol",
     "tiger",
     "tulip",
@@ -334,6 +372,7 @@ _TATTOO_IDEA_MODIFIERS = (
     "large",
     "minimal",
     "minimalist",
+    "multiple",
     "realistic",
     "small",
     "traditional",
@@ -436,6 +475,8 @@ class _ExtractionSubset(BaseModel):
     size_description: str = Field(default="", max_length=100)
     artist_preference_mode: ArtistPreferenceMode = "unknown"
     pricing_requested: bool = False
+    client_intent: ClientIntent = "continue_intake"
+    conversation_status: ConversationStatus = "active"
     missing_information: list[MissingInformationItem] = Field(
         default_factory=list,
         description="Missing items from the required intake checklist.",
@@ -448,7 +489,7 @@ class TattooTextExtractor:
     def __init__(
         self,
         llm: ChatOpenAI | None = None,
-        model_name: str = "gpt-4o",
+        model_name: str | None = None,
     ) -> None:
         self._llm = llm or get_chat_model(model_name=model_name)
         self._parser = JsonOutputParser(pydantic_object=_ExtractionSubset)
@@ -458,6 +499,8 @@ class TattooTextExtractor:
         current_message: str,
         style_tags: list[str],
         visual_color_preference: VisualColorPreference = "unknown",
+        visual_subjects: list[str] | None = None,
+        visual_description: str = "",
         new_image_urls: list[str] | None = None,
         existing_db_state: dict[str, Any] | None = None,
         recent_chat_history: list[Message] | None = None,
@@ -465,6 +508,9 @@ class TattooTextExtractor:
         """Extract details from the latest message and supplied context."""
         normalized_message = current_message.strip()
         safe_image_urls = list(new_image_urls or [])
+        safe_visual_subjects = self._normalize_visual_subjects(
+            visual_subjects or []
+        )
         if not normalized_message and not safe_image_urls:
             raise AnalysisPipelineError(
                 "current_message or new_image_urls must be provided."
@@ -496,6 +542,8 @@ class TattooTextExtractor:
                 current_message=normalized_message,
                 style_tags=normalized_tags,
                 visual_color_preference=visual_color_preference,
+                visual_subjects=safe_visual_subjects,
+                visual_description=visual_description,
                 new_image_urls=safe_image_urls,
                 existing_db_state=safe_db_state,
                 recent_chat_history=safe_chat_history,
@@ -510,6 +558,12 @@ class TattooTextExtractor:
                 recent_chat_history=safe_chat_history,
                 existing_db_state=safe_db_state,
             )
+            if self._is_missing_tattoo_idea(resolved_output.tattoo_idea):
+                visual_idea = self._visual_subject_idea(safe_visual_subjects)
+                if visual_idea:
+                    resolved_output = resolved_output.model_copy(
+                        update={"tattoo_idea": visual_idea}
+                    )
             missing_information = self._finalize_missing_information(
                 llm_output=resolved_output,
                 current_message=normalized_message,
@@ -555,6 +609,8 @@ class TattooTextExtractor:
                 ),
                 artist_preference_mode=resolved_output.artist_preference_mode,
                 pricing_requested=resolved_output.pricing_requested,
+                client_intent=resolved_output.client_intent,
+                conversation_status=resolved_output.conversation_status,
                 missing_information=missing_information,
             )
         except Exception as exc:  # pragma: no cover - defensive branch
@@ -563,6 +619,7 @@ class TattooTextExtractor:
                 current_message=normalized_message,
                 style_tags=normalized_tags,
                 visual_color_preference=visual_color_preference,
+                visual_subjects=safe_visual_subjects,
                 new_image_urls=safe_image_urls,
                 existing_db_state=safe_db_state,
                 recent_chat_history=safe_chat_history,
@@ -573,6 +630,8 @@ class TattooTextExtractor:
         current_message: str,
         style_tags: list[StyleTag],
         visual_color_preference: VisualColorPreference,
+        visual_subjects: list[str],
+        visual_description: str,
         new_image_urls: list[str],
         existing_db_state: dict[str, Any],
         recent_chat_history: list[Message],
@@ -583,6 +642,8 @@ class TattooTextExtractor:
             current_message=current_message,
             style_tags=style_tags,
             visual_color_preference=visual_color_preference,
+            visual_subjects=visual_subjects,
+            visual_description=visual_description,
             new_image_urls=new_image_urls,
             existing_db_state=existing_db_state,
             recent_chat_history=recent_chat_history,
@@ -633,6 +694,23 @@ class TattooTextExtractor:
             cleaned = [tag for tag in cleaned if tag != "unknown"]
 
         return cast(list[StyleTag], cleaned)
+
+    def _normalize_visual_subjects(self, subjects: list[str]) -> list[str]:
+        """Normalize bounded visual subjects before prompt and state use."""
+        normalized: list[str] = []
+        for subject in subjects:
+            value = " ".join(subject.split()).strip(" .,-")[:80]
+            if value and value.casefold() not in {
+                item.casefold() for item in normalized
+            }:
+                normalized.append(value)
+        return normalized[:10]
+
+    def _visual_subject_idea(self, subjects: list[str]) -> str:
+        """Create a concise tattoo concept from trusted vision subjects."""
+        if not subjects:
+            return ""
+        return " and ".join(subjects[:3]).capitalize()
 
     def _detect_style_tags_from_text(self, text: str) -> list[str]:
         """Detect approved style names explicitly stated in conversation text."""
@@ -689,6 +767,8 @@ class TattooTextExtractor:
             size_description=llm_output.size_description,
             artist_preference_mode=llm_output.artist_preference_mode,
             pricing_requested=llm_output.pricing_requested,
+            client_intent=llm_output.client_intent,
+            conversation_status=llm_output.conversation_status,
             missing_information=llm_output.missing_information,
         )
 
@@ -763,12 +843,15 @@ class TattooTextExtractor:
         current_message: str,
         style_tags: list[StyleTag],
         visual_color_preference: VisualColorPreference,
+        visual_subjects: list[str],
         new_image_urls: list[str],
         existing_db_state: dict[str, Any],
         recent_chat_history: list[Message],
     ) -> TattooExtractionDraft:
         """Return a safe draft when the extraction call fails."""
         fallback_idea = self._extract_tattoo_idea_from_text(current_message)
+        if not fallback_idea:
+            fallback_idea = self._visual_subject_idea(visual_subjects)
         fallback = _ExtractionSubset(
             client_name=self._extract_client_name_from_text(current_message),
             tattoo_idea=fallback_idea,
@@ -852,6 +935,8 @@ class TattooTextExtractor:
                 resolved_fallback.artist_preference_mode
             ),
             pricing_requested=resolved_fallback.pricing_requested,
+            client_intent=resolved_fallback.client_intent,
+            conversation_status=resolved_fallback.conversation_status,
             missing_information=missing,
         )
 
@@ -1075,8 +1160,47 @@ class TattooTextExtractor:
                 recent_chat_history=recent_chat_history,
                 existing_db_state=existing_db_state,
             ),
+            client_intent=self._resolve_client_intent(current_message),
+            conversation_status=self._resolve_conversation_status(
+                current_message=current_message,
+                existing_db_state=existing_db_state,
+            ),
             missing_information=llm_output.missing_information,
         )
+
+    def _resolve_client_intent(self, current_message: str) -> ClientIntent:
+        """Classify the latest client turn before choosing an intake action."""
+        if _WITHDRAWAL_PATTERN.search(current_message):
+            return "withdrawal"
+        if _COMPLAINT_PATTERN.search(current_message):
+            return "complaint"
+        if _SIZE_GUIDANCE_PATTERN.search(current_message):
+            return "size_guidance"
+        if _ARTIST_GUIDANCE_INTENT_PATTERN.search(current_message):
+            return "artist_guidance"
+        if _AVAILABILITY_QUESTION_PATTERN.search(current_message):
+            return "availability_question"
+        if _PRICING_PATTERN.search(current_message):
+            return "pricing_question"
+        return "continue_intake"
+
+    def _resolve_conversation_status(
+        self,
+        current_message: str,
+        existing_db_state: dict[str, Any],
+    ) -> ConversationStatus:
+        """Close withdrawn inquiries until the client explicitly reopens them."""
+        if _REOPEN_PATTERN.search(current_message):
+            return "active"
+        if _WITHDRAWAL_PATTERN.search(current_message):
+            return "closed"
+        stored_status = self._get_state_text(
+            existing_db_state,
+            ("conversation_status", "status"),
+        ).casefold()
+        if stored_status in {"closed", "cancelled", "canceled", "withdrawn"}:
+            return "closed"
+        return "active"
 
     def _resolve_context_field(
         self,
@@ -1618,6 +1742,13 @@ class TattooTextExtractor:
         if normalized in {
             "unknown",
             "not provided",
+            "not sure",
+            "unsure",
+            "no idea",
+            "i have no idea",
+            "i don't know",
+            "i dont know",
+            "do not know",
             "general inquiry",
             "general tattoo inquiry",
             "tattoo help",
@@ -2288,7 +2419,8 @@ class TattooTextExtractor:
                 r"black[- ]and[- ]gr[ae]y|black\s*&\s*gr[ae]y|"
                 r"gr[ae]y\s*(?:and|&)?\s*black"
                 r"(?:\s+colou?r(?:\s+combination)?)?|"
-                r"black\s+ink(?:\s+only)?|black\s+only)\b",
+                r"black\s+ink(?:\s+only)?|black\s+only|"
+                r"black(?:\s+colou?r)?)\b",
                 "black-and-grey",
             ),
             (
