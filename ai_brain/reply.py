@@ -54,8 +54,10 @@ _SCHEDULE_TERMS = (
     "preferred date",
     "preferred time",
     "availability",
-    " am",
-    " pm",
+)
+_CLOCK_TIME_PATTERN = re.compile(
+    r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b\d{1,2}:\d{2}\b",
+    flags=re.IGNORECASE,
 )
 _PRICING_PATTERN = re.compile(
     r"\b(?:price|pricing|cost|quote|estimate|how much|budget)\b"
@@ -203,6 +205,8 @@ class ConversationReplyComposer:
     ) -> str:
         """Acknowledge the latest turn and ask only the next useful question."""
         history = recent_chat_history or []
+        if extracted.conversation_status == "closed":
+            return self.compose_closed(message_source="whatsapp")
         pricing_requested = (
             extracted.pricing_requested
             or pricing_was_requested(current_message, history)
@@ -234,6 +238,7 @@ class ConversationReplyComposer:
             suggested_artist_details=suggested_artist_details,
             history=history,
         )
+        size_guidance = self._size_guidance(extracted, history)
         if manual_review:
             review_subject = (
                 "the details and pricing" if pricing_requested else "this"
@@ -243,6 +248,8 @@ class ConversationReplyComposer:
                 reply_parts.append(complexity_notice)
             if artist_guidance:
                 reply_parts.append(artist_guidance)
+            if size_guidance:
+                reply_parts.append(size_guidance)
             reply_parts.append(
                 "I'll have the studio team review "
                 f"{review_subject} and get back to you."
@@ -265,6 +272,8 @@ class ConversationReplyComposer:
                 reply_parts.append(complexity_notice)
             if artist_guidance:
                 reply_parts.append(artist_guidance)
+            if size_guidance:
+                reply_parts.append(size_guidance)
             if pricing_acknowledgement_needed:
                 reply_parts.append(
                     self._pricing_message(extracted, history)
@@ -287,6 +296,8 @@ class ConversationReplyComposer:
             reply_parts.append(complexity_notice)
         if artist_guidance:
             reply_parts.append(artist_guidance)
+        if size_guidance:
+            reply_parts.append(size_guidance)
         reply_parts.append(
             "I've got the main details now. I'll pass this to the team for "
             "a quick review."
@@ -305,6 +316,8 @@ class ConversationReplyComposer:
     ) -> str:
         """Summarize extracted facts once, unless already confirmed."""
         history = recent_chat_history or []
+        if extracted.conversation_status == "closed":
+            return self.compose_closed(message_source="whatsapp")
         pricing_requested = (
             extracted.pricing_requested
             or pricing_was_requested(current_message, history)
@@ -376,6 +389,9 @@ class ConversationReplyComposer:
         )
         if artist_guidance:
             reply_parts.append(artist_guidance)
+        size_guidance = self._size_guidance(extracted, history)
+        if size_guidance:
+            reply_parts.append(size_guidance)
         size_confirmation = self._approximate_size_question(
             extracted,
             history,
@@ -403,6 +419,12 @@ class ConversationReplyComposer:
     ) -> str:
         """Create a natural email that asks only the next useful questions."""
         history = recent_chat_history or []
+        if extracted.conversation_status == "closed":
+            return self.compose_closed(
+                message_source="outlook",
+                existing_db_state=existing_db_state,
+                client_name=extracted.client_name,
+            )
         is_follow_up = self._is_outlook_follow_up(
             history,
             existing_db_state,
@@ -472,6 +494,10 @@ class ConversationReplyComposer:
         )
         if artist_guidance:
             sections.append(artist_guidance)
+
+        size_guidance = self._size_guidance(extracted, history)
+        if size_guidance:
+            sections.append(size_guidance)
 
         if pricing_acknowledgement_needed:
             if self._pricing_previously_acknowledged(history):
@@ -549,6 +575,25 @@ class ConversationReplyComposer:
         sections.append("Kind regards,\nTattoo Hysteria")
         return "\n\n".join(sections)
 
+    def compose_closed(
+        self,
+        message_source: str,
+        existing_db_state: Mapping[str, object] | None = None,
+        client_name: str = "",
+    ) -> str:
+        """Acknowledge withdrawal without continuing intake collection."""
+        acknowledgement = (
+            "Understood. I've closed your tattoo inquiry, and we won't send "
+            "any more intake questions. If you change your mind later, just "
+            "get in touch and we'll be happy to help."
+        )
+        if message_source != "outlook":
+            return acknowledgement
+        salutation = self._outlook_salutation(existing_db_state, client_name)
+        return "\n\n".join(
+            [salutation, acknowledgement, "Kind regards,\nTattoo Hysteria"]
+        )
+
     def _outlook_opening(
         self,
         current_message: str,
@@ -585,9 +630,8 @@ class ConversationReplyComposer:
             return "Thanks, I've noted your appointment preference."
         if _PROJECT_TYPE_PATTERN.search(current_message):
             return "Thanks, I've noted the tattoo type."
-        if (
-            any(term in normalized for term in _SCHEDULE_TERMS)
-            or re.search(r"\b\d{1,2}:\d{2}\b", normalized)
+        if any(term in normalized for term in _SCHEDULE_TERMS) or (
+            _CLOCK_TIME_PATTERN.search(normalized)
         ):
             return "Thanks, I've added your preferred timing."
         return "Thanks, I've added those details."
@@ -614,6 +658,8 @@ class ConversationReplyComposer:
         history: Sequence[Message],
     ) -> str:
         """Answer artist questions from configured portfolio information."""
+        if extracted.client_intent == "size_guidance":
+            return ""
         if not _ARTIST_GUIDANCE_PATTERN.search(current_message):
             return ""
         if suggested_artist == "Unclear":
@@ -643,6 +689,26 @@ class ConversationReplyComposer:
                 "style and design details you've shared."
             )
         return recommendation
+
+    def _size_guidance(
+        self,
+        extracted: TattooExtractionDraft,
+        history: Sequence[Message],
+    ) -> str:
+        """Respond helpfully when the client asks the artist to choose a size."""
+        if (
+            extracted.client_intent != "size_guidance"
+            and extracted.size_description != "not sure"
+        ):
+            return ""
+        guidance = (
+            "It is completely fine not to know the exact size yet. The artist "
+            "can recommend suitable dimensions after reviewing the reference "
+            "and how the design should sit on the body."
+        )
+        if self._assistant_history_contains(guidance, history):
+            return ""
+        return guidance
 
     def _outlook_confirmation_summary(
         self,
@@ -773,7 +839,10 @@ class ConversationReplyComposer:
         details: list[str] = []
         if extracted.size_estimate_cm:
             details.append(extracted.size_estimate_cm)
-        elif extracted.size_description:
+        elif (
+            extracted.size_description
+            and extracted.size_description != "not sure"
+        ):
             details.append(extracted.size_description)
         known_styles = {
             tag for tag in extracted.style_tags if tag != "unknown"
@@ -800,7 +869,8 @@ class ConversationReplyComposer:
         placement = (
             f" on your {extracted.placement}" if extracted.placement else ""
         )
-        return f"It sounds like you'd like a {design}{placement}."
+        design_phrase = self._with_indefinite_article(design)
+        return f"It sounds like you'd like {design_phrase}{placement}."
 
     def _complexity_notice(
         self,
@@ -1021,8 +1091,11 @@ class ConversationReplyComposer:
                 ("Tattoo concept", self._email_value(extracted.tattoo_idea))
             )
 
+        idea = self._idea_fragment(extracted.tattoo_idea)
         style_tags = [
-            tag for tag in extracted.style_tags if tag != "unknown"
+            tag
+            for tag in extracted.style_tags
+            if tag != "unknown" and tag.casefold() not in idea.casefold()
         ]
         if style_tags and "tattoo style" not in missing:
             details.append(("Style", ", ".join(style_tags)))
@@ -1131,8 +1204,11 @@ class ConversationReplyComposer:
         """Summarize only known details in one conversational sentence."""
         if len(extracted.projects) > 1:
             return self._human_request_summary(extracted)
+        idea = self._idea_fragment(extracted.tattoo_idea)
         style_tags = [
-            tag for tag in extracted.style_tags if tag != "unknown"
+            tag
+            for tag in extracted.style_tags
+            if tag != "unknown" and tag.casefold() not in idea.casefold()
         ]
         color_preference = extracted.color_preference
         if color_preference == "color":
@@ -1152,16 +1228,33 @@ class ConversationReplyComposer:
             )
             if self._is_known_reply_value(value)
         ]
+        if idea:
+            descriptors.append(idea)
         placement = ""
         if self._is_known_reply_value(extracted.placement):
             placement = extracted.placement.strip()
         if not descriptors and not placement:
             return ""
 
-        subject = " ".join([*descriptors, "tattoo"])
+        subject = " ".join(descriptors).strip() or "tattoo"
+        if "tattoo" not in subject.casefold():
+            subject = f"{subject} tattoo".strip()
         if placement:
             subject = f"{subject} on your {placement}"
-        return f"Got it, a {subject}."
+        return f"Got it, {self._with_indefinite_article(subject)}."
+
+    def _with_indefinite_article(self, phrase: str) -> str:
+        """Prefix singular designs while leaving counted designs natural."""
+        normalized = phrase.strip()
+        if re.match(
+            r"^(?:multiple|several|two|three|four|five|six|seven|eight|"
+            r"nine|ten|\d+)\b",
+            normalized,
+            flags=re.IGNORECASE,
+        ):
+            return normalized
+        article = "an" if normalized[:1].casefold() in "aeiou" else "a"
+        return f"{article} {normalized}"
 
     def _is_known_reply_value(self, value: str) -> bool:
         """Reject empty and placeholder values from client-facing summaries."""
@@ -1172,6 +1265,7 @@ class ConversationReplyComposer:
             "none",
             "n/a",
             "not provided",
+            "not sure",
         }
 
     def _greeting_reply(self, history: list[Message]) -> str:
