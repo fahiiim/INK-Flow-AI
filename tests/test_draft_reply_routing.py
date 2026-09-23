@@ -78,7 +78,8 @@ def _reasoning_response() -> str:
 def test_router_uses_exact_question_for_incomplete_whatsapp_intake() -> None:
     """Incomplete WhatsApp replies use the controlled intake wording."""
     expected_reply = (
-        "Got it, a 5cm black-and-grey fine-line tattoo on your inner wrist. "
+        "Got it, a 5cm black-and-grey fine-line lotus tattoo on your inner "
+        "wrist. "
         "Does that sound right, or would you like to change anything? "
         "What are your preferred dates or general availability?"
     )
@@ -95,7 +96,7 @@ def test_router_uses_exact_question_for_incomplete_whatsapp_intake() -> None:
     )
 
     assert result.draft_reply == expected_reply
-    assert len(fake_llm.calls) == 1
+    assert len(fake_llm.calls) == 2
 
 
 def test_confirmed_history_continues_with_exact_next_question() -> None:
@@ -119,7 +120,7 @@ def test_confirmed_history_continues_with_exact_next_question() -> None:
         "Got it. What are your preferred dates or general availability?"
     )
     assert "Please confirm" not in result.draft_reply
-    assert len(fake_llm.calls) == 1
+    assert len(fake_llm.calls) == 2
 
 
 def test_non_string_draft_reply_uses_validated_fallback() -> None:
@@ -147,8 +148,8 @@ def test_non_string_draft_reply_uses_validated_fallback() -> None:
     assert result.draft_reply.count("?") <= 2
 
 
-def test_outlook_route_uses_email_composer_and_one_routing_llm_call() -> None:
-    """Outlook bypasses chat drafting and asks two useful questions."""
+def test_outlook_route_uses_natural_draft_with_safe_email_fallback() -> None:
+    """Outlook attempts natural drafting and retains a valid email fallback."""
     fake_llm = SequentialLLM([_reasoning_response()])
     extracted = TattooExtractionDraft(
         tattoo_idea="Floral tattoo",
@@ -186,7 +187,7 @@ def test_outlook_route_uses_email_composer_and_one_routing_llm_call() -> None:
     assert "Dear Maruf," in result.draft_reply
     assert result.risk_level == "low"
     assert result.auto_reply_allowed is True
-    assert len(fake_llm.calls) == 1
+    assert len(fake_llm.calls) == 2
 
 
 def test_first_outlook_price_question_collects_missing_information() -> None:
@@ -232,3 +233,83 @@ def test_first_outlook_price_question_collects_missing_information() -> None:
         result.draft_reply
     )
     assert "\n- " not in result.draft_reply
+
+
+def test_model_cannot_ask_for_a_completed_outlook_field() -> None:
+    """A memory-glitch draft falls back to the validated state composer."""
+    fake_llm = SequentialLLM(
+        [
+            _reasoning_response(),
+            json.dumps(
+                {
+                    "draft_reply": (
+                        "Dear Maruf,\n\nWhat is your tattoo idea?\n\n"
+                        "Kind regards,\nTattoo Hysteria"
+                    )
+                }
+            ),
+        ]
+    )
+    extracted = TattooExtractionDraft(
+        client_name="Maruf Hossain",
+        tattoo_idea="Multiple stars",
+        style_tags=["unknown"],
+        placement="neck",
+        size_estimate_cm="",
+        color_preference="",
+        missing_information=["color preference"],
+    )
+
+    result = TattooRouter(
+        llm=cast(ChatOpenAI, fake_llm),
+        vector_store=_warm_vector_store(),
+    ).route(
+        extracted=extracted,
+        current_message="The design is multiple stars on my neck.",
+        existing_db_state={"lead": {"name": "Maruf Hossain"}},
+        message_source="outlook",
+    )
+
+    assert "What is your tattoo idea?" not in result.draft_reply
+    assert "Would you like colour or black and grey?" in result.draft_reply
+
+
+def test_valid_natural_outlook_model_reply_is_used() -> None:
+    """A grounded professional model draft replaces the stock fallback."""
+    natural_reply = (
+        "Dear Maruf,\n\nMultiple stars on the neck can work beautifully. "
+        "Since you are unsure about size, the artist can recommend suitable "
+        "dimensions after reviewing the reference. Would you like the stars "
+        "in colour or black and grey?\n\nKind regards,\nTattoo Hysteria"
+    )
+    fake_llm = SequentialLLM(
+        [
+            _reasoning_response(),
+            json.dumps({"draft_reply": natural_reply}),
+        ]
+    )
+    extracted = TattooExtractionDraft(
+        client_name="Maruf Hossain",
+        tattoo_idea="Multiple stars",
+        style_tags=["unknown"],
+        placement="neck",
+        size_estimate_cm="",
+        size_description="not sure",
+        size_status="unknown",
+        color_preference="",
+        client_intent="size_guidance",
+        missing_information=["color preference"],
+    )
+
+    result = TattooRouter(
+        llm=cast(ChatOpenAI, fake_llm),
+        vector_store=_warm_vector_store(),
+    ).route(
+        extracted=extracted,
+        current_message="I do not know the size. Can you suggest it?",
+        existing_db_state={"lead": {"name": "Maruf Hossain"}},
+        message_source="outlook",
+    )
+
+    assert result.draft_reply == natural_reply
+    assert len(fake_llm.calls) == 2
