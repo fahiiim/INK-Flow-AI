@@ -32,6 +32,8 @@ The workflow generates this file at `/opt/tattoo-hysteria-ai/.env`:
 
 ```env
 OPENAI_API_KEY=value_from_the_github_production_secret
+OPENAI_MODEL=gpt-6-astra
+OPENAI_REASONING_EFFORT=low
 OPENAI_TEMPERATURE=0.0
 OPENAI_TIMEOUT_SECONDS=30
 OPENAI_MAX_RETRIES=2
@@ -73,6 +75,8 @@ Add these environment secrets:
 - `EC2_SSH_PRIVATE_KEY`: Private deployment key used only by Actions.
 - `EC2_SSH_KNOWN_HOSTS`: Verified SSH known-hosts entry for the EC2 host.
 - `OPENAI_API_KEY`: Project-scoped production OpenAI API key.
+- `OPENAI_MODEL`: Model used for extraction, vision, routing, and natural replies.
+- `OPENAI_REASONING_EFFORT`: Reasoning level for supported OpenAI models.
 
 Generate a dedicated Actions deployment key on a trusted machine:
 
