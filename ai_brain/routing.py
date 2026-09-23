@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections import Counter
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -41,6 +42,26 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 
 _VECTOR_SEARCH_TOP_K = 12
+_DRAFT_QUESTION_MARKERS: dict[str, tuple[str, ...]] = {
+    "client full name": ("full name",),
+    "tattoo idea": ("tattoo idea", "background story", "tattoo concept"),
+    "size in cm": ("what size", "size in", "centimet"),
+    "placement": ("where on your body", "body placement"),
+    "color preference": ("colour or", "color or", "black and grey or"),
+    "tattoo style": ("tattoo style", "which style", "what style"),
+    "reference images": ("reference image", "reference photo"),
+    "preferred artist": ("preferred artist", "which artist"),
+    "appointment type": ("online appointment or", "studio visit or"),
+    "preferred dates or availability": (
+        "preferred date",
+        "your availability",
+        "what date",
+    ),
+    "tattoo project type": (
+        "new tattoo, cover-up",
+        "new tattoo or",
+    ),
+}
 
 
 class _RoutingLLMOutput(BaseModel):
@@ -81,7 +102,7 @@ class TattooRouter:
     def __init__(
         self,
         llm: ChatOpenAI | None = None,
-        model_name: str = "gpt-4o",
+        model_name: str | None = None,
         reply_composer: ConversationReplyComposer | None = None,
         artist_config_manager: ArtistConfigManager | None = None,
         vector_store: VectorStoreManager | None = None,
@@ -133,18 +154,26 @@ class TattooRouter:
         review_reasons = (
             pending_review_reasons if staff_review_required else []
         )
-        if extracted.missing_information:
+        if extracted.conversation_status == "closed":
+            intake_status = "closed"
+        elif extracted.missing_information:
             intake_status = "collecting_info"
         else:
             intake_status = "ready_for_review"
 
-        llm_output = self._routing_llm_output(
-            artist_decision=artist_decision,
-            extracted=extracted,
-            risk_level=risk_level,
-            current_message=current_message,
-            recent_chat_history=history,
-        )
+        if extracted.conversation_status == "closed":
+            llm_output = _RoutingLLMOutput(
+                confidence_level="high",
+                ai_reasoning="The client withdrew from the inquiry.",
+            )
+        else:
+            llm_output = self._routing_llm_output(
+                artist_decision=artist_decision,
+                extracted=extracted,
+                risk_level=risk_level,
+                current_message=current_message,
+                recent_chat_history=history,
+            )
         ai_reasoning = self._combine_routing_reasoning(
             artist_decision.reasoning,
             llm_output.ai_reasoning,
@@ -180,6 +209,8 @@ class TattooRouter:
             size_status=extracted.size_status,
             artist_preference_mode=extracted.artist_preference_mode,
             pricing_requested=extracted.pricing_requested,
+            client_intent=extracted.client_intent,
+            conversation_status=extracted.conversation_status,
             intake_status=intake_status,
             staff_review_required=staff_review_required,
             review_reasons=review_reasons,
@@ -207,8 +238,15 @@ class TattooRouter:
         suggested_artist_details = self._artist_profile_summary(
             suggested_artist
         )
+        if extracted.conversation_status == "closed":
+            return self._reply_composer.compose_closed(
+                message_source=message_source,
+                existing_db_state=existing_db_state,
+                client_name=extracted.client_name,
+            )
+
         if message_source == "outlook":
-            return self._reply_composer.compose_outlook_email(
+            fallback_draft = self._reply_composer.compose_outlook_email(
                 extracted=extracted,
                 existing_db_state=existing_db_state,
                 current_message=current_message,
@@ -216,8 +254,8 @@ class TattooRouter:
                 suggested_artist=suggested_artist,
                 suggested_artist_details=suggested_artist_details,
             )
-        if extracted.missing_information:
-            return self._reply_composer.compose_validation(
+        else:
+            fallback_draft = self._reply_composer.compose_validation(
                 extracted=extracted,
                 current_message=current_message,
                 recent_chat_history=recent_chat_history,
@@ -257,6 +295,8 @@ class TattooRouter:
                         extracted.artist_preference_mode
                     ),
                     "pricing_requested": extracted.pricing_requested,
+                    "client_intent": extracted.client_intent,
+                    "conversation_status": extracted.conversation_status,
                     "suggested_artist_profile": suggested_artist_details,
                 },
                 missing_information=extracted.missing_information,
@@ -265,6 +305,8 @@ class TattooRouter:
                 risk_level=risk_level,
                 format_instructions=format_instructions,
                 existing_db_state=existing_db_state,
+                message_source=message_source,
+                safe_fallback_draft=fallback_draft,
             )
             response = self._llm.invoke(
                 [
@@ -276,17 +318,76 @@ class TattooRouter:
                 self._coerce_content_to_text(response.content)
             )
             output = _DraftReplyLLMOutput.model_validate(parsed)
-            return output.draft_reply.strip()
+            return self._validate_draft_reply(
+                draft_reply=output.draft_reply,
+                extracted=extracted,
+                message_source=message_source,
+            )
         except Exception as exc:  # pragma: no cover - defensive branch
             LOGGER.warning("Draft reply LLM fallback used: %s", exc)
-            return self._reply_composer.compose_validation(
-                extracted=extracted,
-                current_message=current_message,
-                recent_chat_history=recent_chat_history,
-                risk_level=risk_level,
-                suggested_artist=suggested_artist,
-                suggested_artist_details=suggested_artist_details,
+            return fallback_draft
+
+    def _validate_draft_reply(
+        self,
+        draft_reply: str,
+        extracted: TattooExtractionDraft,
+        message_source: MessageSource,
+    ) -> str:
+        """Reject malformed or unsafe model prose and trigger safe fallback."""
+        reply = draft_reply.strip()
+        normalized = " ".join(reply.casefold().split())
+        if reply.count("?") > 2:
+            raise ValueError("Draft reply contains too many questions.")
+        if any(
+            phrase in normalized
+            for phrase in (
+                "not sure tattoo",
+                "unknown tattoo",
+                "studio_visit",
+                "we have recorded the following details",
             )
+        ):
+            raise ValueError("Draft reply exposes invalid or robotic wording.")
+        if extracted.conversation_status == "closed" and "?" in reply:
+            raise ValueError("Closed inquiries cannot contain questions.")
+        repeated_fields = self._questions_for_completed_fields(reply, extracted)
+        if repeated_fields:
+            raise ValueError(
+                "Draft asks for completed fields: "
+                + ", ".join(repeated_fields)
+            )
+        if message_source == "outlook":
+            if reply.casefold().startswith("subject:"):
+                raise ValueError("Outlook draft must not include a subject.")
+            if not re.match(r"^Dear\s+[^,\n]+,", reply):
+                raise ValueError("Outlook draft is missing its salutation.")
+            if "kind regards" not in normalized:
+                raise ValueError("Outlook draft is missing its sign-off.")
+            if "tattoo hysteria" not in normalized:
+                raise ValueError("Outlook draft is missing the studio name.")
+        return reply
+
+    def _questions_for_completed_fields(
+        self,
+        draft_reply: str,
+        extracted: TattooExtractionDraft,
+    ) -> list[str]:
+        """Identify questions that request information already in state."""
+        question_text = " ".join(
+            re.findall(r"[^.!?\n]{1,300}\?", draft_reply.casefold())
+        )
+        if not question_text:
+            return []
+        missing = set(extracted.missing_information)
+        repeated: list[str] = []
+        for field_name, markers in _DRAFT_QUESTION_MARKERS.items():
+            if field_name in missing:
+                continue
+            if field_name == "size in cm" and extracted.size_status == "approximate":
+                continue
+            if any(marker in question_text for marker in markers):
+                repeated.append(field_name)
+        return repeated
 
     def _artist_profile_summary(
         self,
@@ -655,6 +756,8 @@ class TattooRouter:
         extracted: TattooExtractionDraft,
     ) -> RiskLevel:
         """Classify only complete intakes as high risk for staff review."""
+        if extracted.conversation_status == "closed":
+            return "low"
         return "high" if not extracted.missing_information else "low"
 
     def _review_reasons(
