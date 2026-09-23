@@ -25,7 +25,12 @@ Create a `.env` file in the project folder:
 
 ```env
 OPENAI_API_KEY=your_api_key_here
+OPENAI_MODEL=gpt-6-astra
+OPENAI_REASONING_EFFORT=low
 ```
+
+`gpt-6-astra` is the default production model. Set `OPENAI_MODEL` only when a
+deployment needs a different cost or latency profile.
 
 Start the API with:
 
