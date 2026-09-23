@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
+from typing import Literal
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, SecretStr, ValidationError
@@ -15,6 +16,12 @@ class LLMSettings(BaseModel):
     """Validated settings for OpenAI-backed LangChain clients."""
 
     api_key: SecretStr = Field(description="OpenAI API key.")
+    model_name: str = Field(
+        default="gpt-6-astra",
+        min_length=1,
+        description="OpenAI model used by text, routing, reply, and vision calls.",
+    )
+    reasoning_effort: Literal["low", "medium", "high"] = "low"
     temperature: float = Field(default=0.0, ge=0.0, le=1.0)
     timeout_seconds: int = Field(default=30, ge=1)
     max_retries: int = Field(default=2, ge=0)
@@ -32,6 +39,8 @@ def get_settings() -> LLMSettings:
 
     payload = {
         "api_key": api_key,
+        "model_name": os.getenv("OPENAI_MODEL", "gpt-6-astra"),
+        "reasoning_effort": os.getenv("OPENAI_REASONING_EFFORT", "low"),
         "temperature": os.getenv("OPENAI_TEMPERATURE", "0.0"),
         "timeout_seconds": os.getenv("OPENAI_TIMEOUT_SECONDS", "30"),
         "max_retries": os.getenv("OPENAI_MAX_RETRIES", "2"),
