@@ -63,12 +63,16 @@ def test_vision_parser_returns_approved_style_and_color() -> None:
             {
                 "style_tags": ["watercolor", "floral"],
                 "color_preference": "full color",
+                "design_subjects": ["rose", "leaves", "rose"],
+                "visual_description": "A rose surrounded by leaves.",
             }
         )
     )
 
     assert output.style_tags == ["watercolor", "floral"]
     assert output.color_preference == "color"
+    assert output.design_subjects == ["rose", "leaves"]
+    assert output.visual_description == "A rose surrounded by leaves."
 
 
 def test_recognized_image_removes_style_color_and_reference_missing() -> None:
@@ -92,7 +96,7 @@ def test_recognized_image_removes_style_color_and_reference_missing() -> None:
         recent_chat_history=[],
         risk_level="low",
     )
-    assert "watercolor and floral tattoo" in reply
+    assert "watercolor and floral reference tattoo" in reply
     assert "Does that sound right" in reply
 
 
