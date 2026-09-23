@@ -12,11 +12,15 @@ from .schemas import Message
 VISION_SYSTEM_PROMPT = (
     "You are an expert tattoo artist and style analyst. "
     "Review the provided images and return ONLY one JSON object with keys "
-    "style_tags and color_preference. Every style_tags item must be from: "
+    "style_tags, color_preference, design_subjects, and visual_description. "
+    "Every style_tags item must be from: "
     '["fine-line", "watercolor", "minimal", "floral", "micro-realism", '
     '"black-and-grey", "calligraphy", "traditional", "geometric", '
     '"unknown"]. color_preference must be exactly "black-and-grey", "color", '
-    'or "unknown". Use "unknown" when the image is unclear. Do not add text.'
+    'or "unknown". Use "unknown" when the image is unclear. '
+    "design_subjects must contain short, concrete visible subjects such as "
+    "stars, skeleton, rose, or lettering; never infer a personal meaning. "
+    "visual_description must be one concise factual sentence. Do not add text."
 )
 
 EXTRACTION_SYSTEM_PROMPT = (
@@ -38,6 +42,15 @@ EXTRACTION_SYSTEM_PROMPT = (
     "INFERENTIAL RULE: If the client uses vague sizing (e.g., 'hand size', "
     "'coin size'), acknowledge it and note a typical range (e.g., '10-15cm') "
     "rather than bluntly demanding a number. "
+    "UNCERTAINTY RULE: Phrases such as 'not sure' and 'no idea' describe the "
+    "field being discussed. They are never a tattoo concept. Use the latest "
+    "assistant question to resolve which field the uncertainty belongs to. "
+    "INTENT RULE: Detect pricing questions, size guidance, artist guidance, "
+    "availability questions, complaints, and withdrawal from the inquiry. "
+    "If the client says they are no longer interested, set client_intent to "
+    "withdrawal and conversation_status to closed. Do not mark ordinary "
+    "appointment cancellation language as withdrawal unless the client also "
+    "ends the tattoo inquiry. "
     "MULTI-ENTITY RULE: Actively scan for multiple people, multiple tattoos, "
     "or multiple colors in a single message. If detected, set "
     "multi_entity_detected=True and add a note to complexity_notes. "
@@ -69,6 +82,9 @@ DRAFT_REPLY_SYSTEM_PROMPT = (
     "following details', 'Please fill in the following', or bulleted lists of "
     "missing info. "
     "NEVER show a field whose value is blank, unknown, or not provided. "
+    "Treat extracted_details and missing_information as authoritative facts. "
+    "Answer the client's latest direct question before asking for another "
+    "intake detail. Do not repeat a full summary on every turn. "
     "STRUCTURE YOUR REPLY: "
     "1. Warmly acknowledge the client's specific request (e.g., 'A matching "
     "watercolor tattoo sounds wonderful!'). "
@@ -89,6 +105,14 @@ DRAFT_REPLY_SYSTEM_PROMPT = (
     "artist matches the request. Never invent artist experience or styles. "
     "7. Before asking for the final missing item, summarize the known details "
     "in one concise confirmation paragraph. "
+    "8. If size_status is unknown, offer helpful artist guidance without "
+    "calling the tattoo 'not sure' or inventing an exact measurement. "
+    "9. For Outlook, write a professional email beginning with Dear plus the "
+    "client's first name and ending with Kind regards and Tattoo Hysteria. "
+    "Do not include a subject line. For WhatsApp, keep the reply concise and "
+    "do not use an email salutation or signature. "
+    "10. If conversation_status is closed, acknowledge the withdrawal, ask no "
+    "questions, and do not continue intake collection. "
     "Return valid JSON only with one string field named draft_reply."
 )
 
@@ -101,6 +125,8 @@ def build_extraction_human_prompt(
     existing_db_state: Mapping[str, Any] | None = None,
     recent_chat_history: Sequence[Message] = (),
     visual_color_preference: str = "unknown",
+    visual_subjects: Sequence[str] = (),
+    visual_description: str = "",
     required_items: Sequence[str],
     format_instructions: str,
     client_text: str | None = None,
@@ -130,6 +156,8 @@ def build_extraction_human_prompt(
         "new_image_urls": resolved_image_urls,
         "detected_style_tags": list(style_tags),
         "visual_color_preference": visual_color_preference,
+        "visual_subjects": list(visual_subjects),
+        "visual_description": visual_description,
     }
     serialized_context = json.dumps(
         context_payload,
@@ -220,6 +248,8 @@ def build_draft_reply_human_prompt(
     risk_level: str,
     format_instructions: str,
     existing_db_state: Mapping[str, Any] | None = None,
+    message_source: str = "whatsapp",
+    safe_fallback_draft: str = "",
 ) -> str:
     """Build a context-rich prompt for a validated client draft reply."""
     payload = {
@@ -233,6 +263,8 @@ def build_draft_reply_human_prompt(
         ],
         "suggested_artist": suggested_artist,
         "risk_level": risk_level,
+        "message_source": message_source,
+        "safe_fallback_draft": safe_fallback_draft,
     }
     serialized_payload = json.dumps(
         payload,
@@ -241,7 +273,9 @@ def build_draft_reply_human_prompt(
         default=str,
     )
     return (
-        "Create one client-facing draft reply from this validated context:\n"
+        "Create one client-facing draft reply from this validated context. "
+        "The safe fallback demonstrates the required facts and questions, but "
+        "you should rewrite it naturally instead of copying stock phrases:\n"
         f"{serialized_payload}\n\n"
         "Never show blank, Unknown, None, or N/A values. Do not use bullets, "
         "numbering, or field labels. Use one natural summary sentence. Ask "
