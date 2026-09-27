@@ -65,6 +65,8 @@ _REOPEN_PATTERN = re.compile(
 )
 _ARTIST_GUIDANCE_INTENT_PATTERN = re.compile(
     r"\b(?:recommend|suggest|best|better|which\s+artist|who\s+would|"
+    r"who\s+are\s+(?:the|your)\s+artists|artists?\s+in\s+(?:the|your)\s+"
+    r"(?:shop|studio)|guide\s+me\s+about\s+(?:them|the\s+artists)|"
     r"portfolio|speciali[sz]|tell\s+me\s+about)\b",
     flags=re.IGNORECASE,
 )
@@ -169,6 +171,11 @@ _MULTIPLE_TATTOOS_PATTERN = re.compile(
     r"\b(?:two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\s+"
     r"(?:different\s+|matching\s+)?tattoos?\b|"
     r"\b(?:multiple|several)\s+tattoos?\b",
+    flags=re.IGNORECASE,
+)
+_COUNTED_BODY_PART_PATTERN = re.compile(
+    r"\b(?P<count>two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\s+"
+    r"(?P<part>fingers?|toes?|hands?|wrists?|arms?|legs?)\b",
     flags=re.IGNORECASE,
 )
 _MATCHING_EXISTING_TATTOO_PATTERN = re.compile(
@@ -415,6 +422,8 @@ _APPOINTMENT_TYPE_FIELD_TERMS = (
     "studio visit",
     "studio_visit",
     "visit the studio",
+    "visit to the studio",
+    "visit to your studio",
     "come to the studio",
     "come to your studio",
     "came to the studio",
@@ -448,10 +457,12 @@ _TATTOO_SUBJECT_WORDS = (
     "animal",
     "bird",
     "butterfly",
+    "diamond",
     "dragon",
     "eagle",
     "flower",
     "flowers",
+    "heart",
     "lettering",
     "lotus",
     "mandala",
@@ -465,6 +476,7 @@ _TATTOO_SUBJECT_WORDS = (
     "snake",
     "star",
     "stars",
+    "sword",
     "symbol",
     "tiger",
     "tulip",
@@ -1404,6 +1416,8 @@ class TattooTextExtractor:
             return True
         if _MULTIPLE_TATTOOS_PATTERN.search(conversation):
             return True
+        if len(self._extract_same_client_tattoo_ideas(conversation)) > 1:
+            return True
         if _MATCHING_EXISTING_TATTOO_PATTERN.search(conversation):
             return True
 
@@ -1446,10 +1460,15 @@ class TattooTextExtractor:
             recent_chat_history=recent_chat_history,
         )
         details: list[str] = []
+        enumerated_count = len(
+            self._extract_same_client_tattoo_ideas(conversation)
+        )
         if party_size > 1:
             details.append(f"{party_size} people")
         if project_count > 1:
             details.append(f"{project_count} tattoo projects")
+        elif enumerated_count > 1:
+            details.append(f"{enumerated_count} tattoo projects for one client")
         elif _MULTIPLE_TATTOOS_PATTERN.search(conversation):
             details.append("multiple tattoos")
 
@@ -1910,6 +1929,11 @@ class TattooTextExtractor:
         if not normalized or normalized == _IMAGE_ONLY_MESSAGE:
             return ""
 
+        separate_ideas = self._extract_same_client_tattoo_ideas(normalized)
+        if len(separate_ideas) > 1:
+            placement = self._extract_placement_from_text(normalized)
+            return self._combined_tattoo_idea(separate_ideas, placement)
+
         quoted_wording = self._extract_quoted_wording_idea(normalized)
         if quoted_wording:
             return quoted_wording
@@ -1974,6 +1998,141 @@ class TattooTextExtractor:
         if not usable:
             return ""
         return max(usable, key=lambda item: item[0])[1]
+
+    def _extract_same_client_tattoo_ideas(self, text: str) -> list[str]:
+        """Extract enumerated tattoos without treating them as people."""
+        normalized = " ".join(text.split())
+        clauses = re.split(
+            r"\s*,\s*(?:and\s+)?(?=another\b)|"
+            r"\s+and\s+(?=another\b)",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        ideas: list[str] = []
+        for clause in clauses:
+            candidate = self._enumerated_idea_from_clause(clause)
+            if candidate and candidate.casefold() not in {
+                value.casefold() for value in ideas
+            }:
+                ideas.append(candidate)
+        if len(ideas) > 1:
+            return ideas
+
+        placed_idea_pattern = re.compile(
+            r"(?P<idea>[a-z][a-z -]{1,45}?)\s+on\s+"
+            r"(?:the\s+)?(?:first|second|third|fourth|one|another)\s+"
+            r"(?:finger|toe)\b",
+            flags=re.IGNORECASE,
+        )
+        for match in placed_idea_pattern.finditer(normalized):
+            candidate = self._clean_enumerated_idea(match.group("idea"))
+            if candidate:
+                ideas.append(candidate)
+        return ideas if len(ideas) > 1 else []
+
+    def _enumerated_idea_from_clause(self, clause: str) -> str:
+        """Extract one design from an enumerated same-client clause."""
+        patterns = (
+            re.compile(
+                r"\b(?:on\s+)?(?:one|first|second|third|fourth|another)"
+                r"(?:\s+one|\s+finger|\s+toe)?\s+(?:it\s+)?"
+                r"(?:will|would|should)?\s*(?:be|have)?\s*"
+                r"(?P<idea>.+)$",
+                flags=re.IGNORECASE,
+            ),
+            re.compile(
+                r"\b(?P<idea>[a-z][a-z -]{1,45}?)\s+on\s+"
+                r"(?:the\s+)?(?:first|second|third|fourth|one|another)\s+"
+                r"(?:finger|toe)\b",
+                flags=re.IGNORECASE,
+            ),
+        )
+        for pattern in patterns:
+            match = pattern.search(clause)
+            if match is None:
+                continue
+            candidate = self._clean_enumerated_idea(match.group("idea"))
+            if candidate:
+                return candidate
+        return ""
+
+    def _clean_enumerated_idea(self, value: str) -> str:
+        """Normalize one short item from a multi-tattoo description."""
+        candidate = " ".join(value.split()).strip(" ,.;:-")
+        candidate = re.sub(
+            r"^(?:it\s+will\s+be\s+|will\s+be\s+|be\s+|in\s+|"
+            r"a\s+|an\s+|the\s+)+",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        candidate = re.sub(
+            r"\s+(?:shaped?\s+)?tattoos?$|\s+shapes?$",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        candidate = re.sub(
+            r"\bdiamond\s+shaped\b",
+            "diamond",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        candidate = re.split(
+            r"\b(?:maybe|approximately|about|around)\b.{0,25}"
+            r"\b(?:cm|centimet)",
+            candidate,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0].strip(" ,.;:-")
+        candidate = re.sub(
+            r"\s+(?:shaped?\s+)?tattoos?$|\s+shapes?$",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        if not candidate or len(candidate.split()) > 8:
+            return ""
+        return candidate.casefold()
+
+    def _combined_tattoo_idea(
+        self,
+        ideas: list[str],
+        placement: str,
+    ) -> str:
+        """Create one flat concept that preserves every separate tattoo."""
+        count = self._count_label(len(ideas)).capitalize()
+        placement_label = ""
+        if "finger" in placement.casefold():
+            placement_label = " finger"
+        elif "toe" in placement.casefold():
+            placement_label = " toe"
+        joined = self._natural_join(ideas)
+        return f"{count}{placement_label} tattoos: {joined}"
+
+    def _natural_join(self, values: list[str]) -> str:
+        """Join short extraction values using natural punctuation."""
+        if len(values) == 1:
+            return values[0]
+        if len(values) == 2:
+            return f"{values[0]} and {values[1]}"
+        return f"{', '.join(values[:-1])}, and {values[-1]}"
+
+    def _count_label(self, count: int) -> str:
+        """Return a readable label for a small count."""
+        words = {
+            1: "one",
+            2: "two",
+            3: "three",
+            4: "four",
+            5: "five",
+            6: "six",
+            7: "seven",
+            8: "eight",
+            9: "nine",
+            10: "ten",
+        }
+        return words.get(count, str(count))
 
     def _extract_reference_based_idea(self, text: str) -> str:
         """Recognize a clearly named tattoo reference as a usable concept."""
@@ -2310,6 +2469,21 @@ class TattooTextExtractor:
     ) -> list[TattooProjectDetail]:
         """Build per-person tattoo details while preserving prior project state."""
         projects = [project.model_copy(deep=True) for project in llm_projects]
+        enumerated_ideas = self._extract_same_client_tattoo_ideas(
+            current_message
+        )
+        if len(enumerated_ideas) > 1:
+            individual_placement = self._individual_placement(
+                resolved_output.placement
+            )
+            projects = [
+                TattooProjectDetail(
+                    person_label="Client",
+                    tattoo_idea=idea.capitalize(),
+                    placement=individual_placement,
+                )
+                for idea in enumerated_ideas
+            ]
         if not projects:
             projects = self._stored_projects(existing_db_state)
 
@@ -2382,6 +2556,18 @@ class TattooTextExtractor:
                 )
             )
         return resolved
+
+    def _individual_placement(self, placement: str) -> str:
+        """Convert a counted placement into one project's body placement."""
+        normalized = " ".join(placement.casefold().split())
+        normalized = re.sub(
+            r"^(?:two|three|four|five|six|seven|eight|nine|ten|\d+)\s+",
+            "",
+            normalized,
+        )
+        if normalized.endswith("s"):
+            normalized = normalized[:-1]
+        return normalized
 
     def _stored_projects(
         self,
@@ -2495,6 +2681,7 @@ class TattooTextExtractor:
             (r"\bonline(?:\s+(?:appointment|consultation))?\b", "online"),
             (
                 r"\b(?:studio[_ -]?visit|visit(?:ing)?\s+(?:the\s+)?studio|"
+                r"visit(?:ing)?\s+to\s+(?:(?:the|your)\s+)?studio|"
                 r"(?:come|came|coming)\s+to\s+(?:(?:the|your)\s+)?studio|"
                 r"in[- ]person)\b",
                 "studio_visit",
@@ -2632,6 +2819,21 @@ class TattooTextExtractor:
             " ",
             normalized,
         )
+        counted_matches = list(_COUNTED_BODY_PART_PATTERN.finditer(normalized))
+        if counted_matches:
+            latest = counted_matches[-1]
+            count = latest.group("count")
+            part = latest.group("part")
+            plural_part = part if part.endswith("s") else f"{part}s"
+            return f"{count} {plural_part}"
+
+        if re.search(r"\bone\s+finger\b", normalized):
+            additional = len(
+                re.findall(r"\banother(?:\s+one)?\b", normalized)
+            )
+            if additional:
+                return f"{self._count_label(1 + additional)} fingers"
+
         matches: list[tuple[int, int, str]] = []
         for alias, canonical in _PLACEMENT_ALIASES:
             pattern = rf"\b{re.escape(alias)}\b"

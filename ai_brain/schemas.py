@@ -481,10 +481,6 @@ class AIExtractionOutput(BaseModel):
             "Notes on complex requests, e.g., multiple people or colors."
         ),
     )
-    projects: list[TattooProjectDetail] = Field(
-        default_factory=list,
-        max_length=20,
-    )
     size_description: str = Field(default="", max_length=100)
     size_status: SizeStatus = "unknown"
     artist_preference_mode: ArtistPreferenceMode = "unknown"

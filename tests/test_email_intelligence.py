@@ -300,3 +300,98 @@ def test_unlisted_body_placement_receives_safe_fallback_range() -> None:
     assert result.size_estimate_cm == "5-20 cm"
     assert result.size_status == "approximate"
     assert "size in cm" not in result.missing_information
+
+
+def test_three_finger_tattoos_remain_one_client_with_three_designs() -> None:
+    """Separate tattoos stay distinct without becoming three people."""
+    extractor = _extractor()
+    first_message = (
+        "I want to get tattoos on my three fingers. I wanna visit to your "
+        "studio soon."
+    )
+    first = extractor.extract(
+        current_message=first_message,
+        style_tags=["unknown"],
+        existing_db_state={"lead": {"name": "Fahim Sarker"}},
+    )
+
+    assert first.placement == "three fingers"
+    assert first.appointment_type == "studio_visit"
+    assert first.party_size == 1
+
+    second_message = (
+        "The idea is: on one finger it will be a heart shape, another one "
+        "will be a sword, and another will be a diamond shaped tattoo. "
+        "Maybe it will be 1.5 cm on each finger."
+    )
+    second = extractor.extract(
+        current_message=second_message,
+        style_tags=first.style_tags,
+        existing_db_state={
+            "lead": {"name": "Fahim Sarker"},
+            "intake": first.model_dump(mode="json"),
+        },
+    )
+
+    assert second.tattoo_idea == (
+        "Three finger tattoos: heart, sword, and diamond"
+    )
+    assert second.placement == "three fingers"
+    assert second.size_estimate_cm == "1.5 cm"
+    assert second.party_size == 1
+    assert second.multi_entity_detected is True
+    assert len(second.projects) == 3
+    assert {project.person_label for project in second.projects} == {"Client"}
+    assert [project.tattoo_idea for project in second.projects] == [
+        "Heart",
+        "Sword",
+        "Diamond",
+    ]
+
+
+def test_artist_roster_question_is_answered_and_projects_are_not_public() -> None:
+    """Artist information is answered while the API remains flat."""
+    extractor = _extractor()
+    stored_intake = {
+        "client_name": "Fahim Sarker",
+        "tattoo_idea": "Three finger tattoos: heart, sword, and diamond",
+        "placement": "three fingers",
+        "size_estimate_cm": "1.5 cm",
+        "color_preference": "black-and-grey",
+        "appointment_type": "studio_visit",
+        "party_size": 1,
+        "multi_entity_detected": True,
+        "complexity_notes": (
+            "Complex routing required: 3 tattoo projects for one client"
+        ),
+    }
+    message = (
+        "It's a minimal style. Who are the artists in your shop? Could you "
+        "please guide me about them?"
+    )
+    extracted = extractor.extract(
+        current_message=message,
+        style_tags=["unknown"],
+        existing_db_state={
+            "lead": {"name": "Fahim Sarker"},
+            "intake": stored_intake,
+        },
+    )
+    result = TattooRouter(
+        llm=cast(ChatOpenAI, FailingLLM())
+    ).route(
+        extracted=extracted,
+        current_message=message,
+        existing_db_state={
+            "lead": {"name": "Fahim Sarker"},
+            "intake": stored_intake,
+        },
+        message_source="outlook",
+    )
+
+    assert extracted.client_intent == "artist_guidance"
+    assert extracted.tattoo_idea == stored_intake["tattoo_idea"]
+    assert "minimal like:" not in result.draft_reply.casefold()
+    for artist in ("Hoss", "Nina", "Lana", "Sandra", "Silva"):
+        assert artist in result.draft_reply
+    assert "projects" not in result.model_dump(mode="json")

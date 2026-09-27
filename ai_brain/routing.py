@@ -27,6 +27,7 @@ from .prompts import (
 from .reply import ConversationReplyComposer
 from .routing_rules import RoutingRule, RoutingRuleEngine
 from .schemas import (
+    ARTIST_PREFERENCE_OPTIONS,
     AIExtractionOutput,
     ConfidenceLevel,
     Message,
@@ -204,7 +205,6 @@ class TattooRouter:
             party_size=extracted.party_size,
             multi_entity_detected=extracted.multi_entity_detected,
             complexity_notes=extracted.complexity_notes,
-            projects=extracted.projects,
             size_description=extracted.size_description,
             size_status=extracted.size_status,
             artist_preference_mode=extracted.artist_preference_mode,
@@ -238,6 +238,7 @@ class TattooRouter:
         suggested_artist_details = self._artist_profile_summary(
             suggested_artist
         )
+        artist_directory = self._artist_directory_summary()
         if extracted.conversation_status == "closed":
             return self._reply_composer.compose_closed(
                 message_source=message_source,
@@ -253,6 +254,7 @@ class TattooRouter:
                 recent_chat_history=recent_chat_history,
                 suggested_artist=suggested_artist,
                 suggested_artist_details=suggested_artist_details,
+                artist_directory=artist_directory,
             )
         else:
             fallback_draft = self._reply_composer.compose_validation(
@@ -262,6 +264,7 @@ class TattooRouter:
                 risk_level=risk_level,
                 suggested_artist=suggested_artist,
                 suggested_artist_details=suggested_artist_details,
+                artist_directory=artist_directory,
             )
 
         try:
@@ -298,6 +301,7 @@ class TattooRouter:
                     "client_intent": extracted.client_intent,
                     "conversation_status": extracted.conversation_status,
                     "suggested_artist_profile": suggested_artist_details,
+                    "artist_directory": artist_directory,
                 },
                 missing_information=extracted.missing_information,
                 recent_chat_history=recent_chat_history,
@@ -322,6 +326,7 @@ class TattooRouter:
                 draft_reply=output.draft_reply,
                 extracted=extracted,
                 message_source=message_source,
+                current_message=current_message,
             )
         except Exception as exc:  # pragma: no cover - defensive branch
             LOGGER.warning("Draft reply LLM fallback used: %s", exc)
@@ -332,6 +337,7 @@ class TattooRouter:
         draft_reply: str,
         extracted: TattooExtractionDraft,
         message_source: MessageSource,
+        current_message: str,
     ) -> str:
         """Reject malformed or unsafe model prose and trigger safe fallback."""
         reply = draft_reply.strip()
@@ -350,6 +356,17 @@ class TattooRouter:
             raise ValueError("Draft reply exposes invalid or robotic wording.")
         if extracted.conversation_status == "closed" and "?" in reply:
             raise ValueError("Closed inquiries cannot contain questions.")
+        if self._is_artist_roster_question(current_message):
+            missing_artists = [
+                artist
+                for artist in ARTIST_PREFERENCE_OPTIONS
+                if artist.casefold() not in normalized
+            ]
+            if missing_artists:
+                raise ValueError(
+                    "Artist-roster reply omitted: "
+                    + ", ".join(missing_artists)
+                )
         if (
             not extracted.missing_information
             and not self._mentions_confirmed_intake_detail(reply, extracted)
@@ -437,6 +454,44 @@ class TattooRouter:
             if artist.display_name.casefold() == suggested_artist.casefold():
                 return artist.profile_summary
         return ""
+
+    def _artist_directory_summary(self) -> str:
+        """Return a concise client-safe directory from configured profiles."""
+        profiles = {
+            artist.display_name.casefold(): artist
+            for artist in self._artist_config.get_active_artists()
+        }
+        descriptions: list[str] = []
+        for display_name in ARTIST_PREFERENCE_OPTIONS:
+            profile = profiles.get(display_name.casefold())
+            if profile is None:
+                continue
+            specialties = self._natural_list(profile.specialties)
+            descriptions.append(f"{display_name} ({specialties})")
+        if not descriptions:
+            return ""
+        return "Our resident artists are " + self._natural_list(descriptions) + "."
+
+    def _natural_list(self, values: list[str]) -> str:
+        """Join client-facing values with natural punctuation."""
+        if len(values) == 1:
+            return values[0]
+        if len(values) == 2:
+            return f"{values[0]} and {values[1]}"
+        return f"{', '.join(values[:-1])}, and {values[-1]}"
+
+    def _is_artist_roster_question(self, message: str) -> bool:
+        """Return whether the client requested the studio artist directory."""
+        return bool(
+            re.search(
+                r"\b(?:who\s+are\s+(?:the|your)\s+artists|"
+                r"artists?\s+in\s+(?:the|your)\s+(?:shop|studio)|"
+                r"guide\s+me\s+about\s+(?:them|the\s+artists)|"
+                r"tell\s+me\s+about\s+(?:the|your)\s+artists)\b",
+                message,
+                flags=re.IGNORECASE,
+            )
+        )
 
     def _suggest_artist(
         self,

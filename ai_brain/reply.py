@@ -68,7 +68,16 @@ _POSSIBLE_PATTERN = re.compile(
 )
 _ARTIST_GUIDANCE_PATTERN = re.compile(
     r"\b(?:recommend|suggest|best|better|which\s+artist|who\s+would|"
+    r"who\s+are\s+(?:the|your)\s+artists|artists?\s+in\s+(?:the|your)\s+"
+    r"(?:shop|studio)|guide\s+me\s+about\s+(?:them|the\s+artists)|"
     r"portfolio|speciali[sz]|tell\s+me\s+about)\b",
+    flags=re.IGNORECASE,
+)
+_ARTIST_ROSTER_PATTERN = re.compile(
+    r"\b(?:who\s+are\s+(?:the|your)\s+artists|"
+    r"artists?\s+in\s+(?:the|your)\s+(?:shop|studio)|"
+    r"guide\s+me\s+about\s+(?:them|the\s+artists)|"
+    r"tell\s+me\s+about\s+(?:the|your)\s+artists)\b",
     flags=re.IGNORECASE,
 )
 _STUDIO_AVAILABILITY_PATTERN = re.compile(
@@ -202,6 +211,7 @@ class ConversationReplyComposer:
         risk_level: RiskLevel,
         suggested_artist: str = "Unclear",
         suggested_artist_details: str = "",
+        artist_directory: str = "",
     ) -> str:
         """Acknowledge the latest turn and ask only the next useful question."""
         history = recent_chat_history or []
@@ -236,6 +246,7 @@ class ConversationReplyComposer:
             current_message=current_message,
             suggested_artist=suggested_artist,
             suggested_artist_details=suggested_artist_details,
+            artist_directory=artist_directory,
             history=history,
         )
         size_guidance = self._size_guidance(extracted, history)
@@ -258,7 +269,10 @@ class ConversationReplyComposer:
             return self._avoid_exact_repeat(reply, history)
 
         questions = self._select_questions(
-            missing_information=extracted.missing_information,
+            missing_information=self._question_information_for_turn(
+                list(extracted.missing_information),
+                current_message,
+            ),
             history=history,
         )
         questions = self._prepend_size_confirmation(
@@ -313,6 +327,7 @@ class ConversationReplyComposer:
         risk_level: RiskLevel,
         suggested_artist: str = "Unclear",
         suggested_artist_details: str = "",
+        artist_directory: str = "",
     ) -> str:
         """Summarize extracted facts once, unless already confirmed."""
         history = recent_chat_history or []
@@ -338,6 +353,7 @@ class ConversationReplyComposer:
                 risk_level=risk_level,
                 suggested_artist=suggested_artist,
                 suggested_artist_details=suggested_artist_details,
+                artist_directory=artist_directory,
             )
         if self._is_greeting_only(current_message):
             return self.compose(
@@ -347,6 +363,7 @@ class ConversationReplyComposer:
                 risk_level=risk_level,
                 suggested_artist=suggested_artist,
                 suggested_artist_details=suggested_artist_details,
+                artist_directory=artist_directory,
             )
         if self._details_already_confirmed(current_message, history):
             return self.compose(
@@ -356,6 +373,7 @@ class ConversationReplyComposer:
                 risk_level=risk_level,
                 suggested_artist=suggested_artist,
                 suggested_artist_details=suggested_artist_details,
+                artist_directory=artist_directory,
             )
 
         summary = self._natural_summary(extracted)
@@ -367,10 +385,14 @@ class ConversationReplyComposer:
                 risk_level=risk_level,
                 suggested_artist=suggested_artist,
                 suggested_artist_details=suggested_artist_details,
+                artist_directory=artist_directory,
             )
 
         questions = self._select_questions(
-            missing_information=extracted.missing_information,
+            missing_information=self._question_information_for_turn(
+                list(extracted.missing_information),
+                current_message,
+            ),
             history=history,
         )[:1]
         reply_parts = []
@@ -385,6 +407,7 @@ class ConversationReplyComposer:
             current_message=current_message,
             suggested_artist=suggested_artist,
             suggested_artist_details=suggested_artist_details,
+            artist_directory=artist_directory,
             history=history,
         )
         if artist_guidance:
@@ -416,6 +439,7 @@ class ConversationReplyComposer:
         recent_chat_history: Sequence[Message] | None = None,
         suggested_artist: str = "Unclear",
         suggested_artist_details: str = "",
+        artist_directory: str = "",
     ) -> str:
         """Create a natural email that asks only the next useful questions."""
         history = recent_chat_history or []
@@ -442,6 +466,10 @@ class ConversationReplyComposer:
             )
         )
         missing_information = list(extracted.missing_information)
+        question_information = self._question_information_for_turn(
+            missing_information,
+            current_message,
+        )
         correction = any(
             term in current_message.casefold() for term in _CORRECTION_TERMS
         )
@@ -490,6 +518,7 @@ class ConversationReplyComposer:
             current_message=current_message,
             suggested_artist=suggested_artist,
             suggested_artist_details=suggested_artist_details,
+            artist_directory=artist_directory,
             history=history,
         )
         if artist_guidance:
@@ -532,7 +561,7 @@ class ConversationReplyComposer:
                 return "\n\n".join(sections)
 
             questions = self._select_questions(
-                missing_information=missing_information,
+                missing_information=question_information,
                 history=list(history),
             )
             questions = self._prepend_size_confirmation(
@@ -655,6 +684,7 @@ class ConversationReplyComposer:
         current_message: str,
         suggested_artist: str,
         suggested_artist_details: str,
+        artist_directory: str,
         history: Sequence[Message],
     ) -> str:
         """Answer artist questions from configured portfolio information."""
@@ -662,6 +692,8 @@ class ConversationReplyComposer:
             return ""
         if not _ARTIST_GUIDANCE_PATTERN.search(current_message):
             return ""
+        if _ARTIST_ROSTER_PATTERN.search(current_message) and artist_directory:
+            return artist_directory
         if suggested_artist == "Unclear":
             return (
                 "I don't have enough of a portfolio match to recommend one "
@@ -799,6 +831,11 @@ class ConversationReplyComposer:
         extracted: TattooExtractionDraft,
     ) -> str:
         """Describe known client details as prose rather than an audit log."""
+        aggregate_summary = self._aggregate_multi_tattoo_summary(extracted)
+        if aggregate_summary:
+            return aggregate_summary
+        if len(extracted.projects) > 1 and extracted.party_size == 1:
+            return self._same_client_projects_summary(extracted)
         if len(extracted.projects) > 1:
             project_designs = [
                 self._project_design(project)
@@ -871,6 +908,117 @@ class ConversationReplyComposer:
         )
         design_phrase = self._with_indefinite_article(design)
         return f"It sounds like you'd like {design_phrase}{placement}."
+
+    def _aggregate_multi_tattoo_summary(
+        self,
+        extracted: TattooExtractionDraft,
+    ) -> str:
+        """Render a flat multi-tattoo concept as natural client prose."""
+        match = re.fullmatch(
+            r"(?P<count>two|three|four|five|six|seven|eight|nine|ten|\d+)"
+            r"(?:\s+(?P<body>finger|toe))?\s+tattoos?:\s*"
+            r"(?P<ideas>.+)",
+            extracted.tattoo_idea.strip(),
+            flags=re.IGNORECASE,
+        )
+        if match is None:
+            return ""
+        descriptors: list[str] = [match.group("count").casefold()]
+        if extracted.size_estimate_cm:
+            descriptors.append(extracted.size_estimate_cm)
+        if extracted.color_preference == "black-and-grey":
+            descriptors.append("black-and-grey")
+        elif extracted.color_preference == "color":
+            descriptors.append("colour")
+        descriptors.extend(
+            style
+            for style in extracted.style_tags
+            if style not in {"unknown", "black-and-grey"}
+        )
+        if match.group("body"):
+            descriptors.append(match.group("body").casefold())
+        descriptors.append("tattoos")
+        ideas = re.split(
+            r"\s*,\s*(?:and\s+)?|\s+and\s+",
+            match.group("ideas"),
+        )
+        idea_phrases = [
+            self._with_indefinite_article(idea.strip())
+            for idea in ideas
+            if idea.strip()
+        ]
+        return (
+            f"It sounds like you're planning {' '.join(descriptors)}: "
+            f"{self._natural_join(idea_phrases)}."
+        )
+
+    def _question_information_for_turn(
+        self,
+        missing_information: list[str],
+        current_message: str,
+    ) -> list[str]:
+        """Avoid requesting an artist choice while answering a roster question."""
+        if not _ARTIST_ROSTER_PATTERN.search(current_message):
+            return missing_information
+        return [
+            item for item in missing_information if item != "preferred artist"
+        ]
+
+    def _same_client_projects_summary(
+        self,
+        extracted: TattooExtractionDraft,
+    ) -> str:
+        """Describe multiple tattoos for one client without inventing people."""
+        project_ideas = [
+            str(project.tattoo_idea).strip().casefold()
+            for project in extracted.projects
+            if str(project.tattoo_idea).strip()
+        ]
+        ideas = [
+            self._with_indefinite_article(idea)
+            for idea in project_ideas
+        ]
+        descriptors: list[str] = []
+        if extracted.size_estimate_cm:
+            descriptors.append(extracted.size_estimate_cm)
+        if extracted.color_preference == "black-and-grey":
+            descriptors.append("black-and-grey")
+        elif extracted.color_preference == "color":
+            descriptors.append("colour")
+        descriptors.extend(
+            style
+            for style in extracted.style_tags
+            if style not in {"unknown", "black-and-grey"}
+        )
+        placement = extracted.placement.casefold()
+        if "finger" in placement:
+            descriptors.append("finger")
+        elif "toe" in placement:
+            descriptors.append("toe")
+        count = self._number_word(len(extracted.projects))
+        subject = " ".join([count, *descriptors, "tattoos"])
+        if not ideas:
+            return f"It sounds like you're planning {subject}."
+        return (
+            f"It sounds like you're planning {subject}: "
+            f"{self._natural_join(ideas)}."
+        )
+
+    def _number_word(self, value: int) -> str:
+        """Return a readable small number for client-facing prose."""
+        words = {
+            1: "one",
+            2: "two",
+            3: "three",
+            4: "four",
+            5: "five",
+            6: "six",
+            7: "seven",
+            8: "eight",
+            9: "nine",
+            10: "ten",
+        }
+        return words.get(value, str(value))
 
     def _complexity_notice(
         self,
@@ -1202,6 +1350,9 @@ class ConversationReplyComposer:
         extracted: TattooExtractionDraft,
     ) -> str:
         """Summarize only known details in one conversational sentence."""
+        aggregate_summary = self._aggregate_multi_tattoo_summary(extracted)
+        if aggregate_summary:
+            return aggregate_summary.replace("It sounds like", "Got it,")
         if len(extracted.projects) > 1:
             return self._human_request_summary(extracted)
         idea = self._idea_fragment(extracted.tattoo_idea)
