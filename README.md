@@ -71,7 +71,9 @@ public response does not contain a nested `projects` field. Qualitative answers
 such as `hand-sized` are stored in `size_description`; an explicit `not sure`
 is accepted and flagged for staff help instead of being asked repeatedly.
 `artist_preference_mode` distinguishes a named artist from requests such as
-"please recommend the best fit".
+"please recommend the best fit". A recommendation request does not populate
+`preferred_artist`; that field changes only when the client selects an artist
+or explicitly says that they have no preference.
 
 For Outlook, the response includes the exact JSON key `Auto-reply`. It is true
 only for a recognized tattoo inquiry or an established tattoo-intake follow-up
@@ -91,6 +93,14 @@ becomes `high` only when the required intake is complete. Separately,
 `staff_review_required`, `review_reasons`, and `intake_status` allow complex
 but incomplete cases—such as group requests or an unknown size—to reach staff
 without falsely marking them complete.
+
+Tongue tattoo requests pause ordinary intake immediately. They keep the normal
+completeness-based risk level, but set `staff_review_required` and
+`telegram_review_required` to true, set `intake_status` to
+`needs_staff_review`, and disable both automatic-reply controls. Status-update
+questions follow the same manual-review path when no verified backend status
+is available. Image-led style wording is kept as `reference-led design` in the
+notes unless text or vision provides a supported named style.
 
 Use `/api/v1/inquiries/telegram-summary` whenever
 `telegram_review_required` is true. It returns a concise staff summary, the
