@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from .review_policy import is_proceed_confirmation, is_status_update_request
 from .schemas import Message, TattooInquiryInput
 
 _NO_REPLY_ADDRESS_PATTERN = re.compile(
@@ -67,7 +68,7 @@ _STYLE_PATTERN = re.compile(
 _PLACEMENT_PATTERN = re.compile(
     r"\b(?:wrist|hand|finger|arm|forearm|bicep|shoulder|chest|sternum|"
     r"back|spine|rib|stomach|abdomen|hip|thigh|leg|calf|knee|ankle|"
-    r"foot|toe|neck|throat|face|head|scalp|ear)\b",
+    r"foot|toe|neck|throat|face|head|scalp|ear|tongue)\b",
     flags=re.IGNORECASE,
 )
 _DESIGN_PATTERN = re.compile(
@@ -191,6 +192,10 @@ class OutlookInquiryClassifier:
             return False
         if inquiry.new_image_urls:
             return True
+        if is_status_update_request(message):
+            return True
+        if is_proceed_confirmation(message):
+            return True
         if _INTAKE_ANSWER_PATTERN.search(message):
             return True
         return self._last_assistant_requested_information(
@@ -204,12 +209,7 @@ class OutlookInquiryClassifier:
     ) -> bool:
         """Require thread evidence before accepting an ambiguous follow-up."""
         assistant_context = any(
-            message.role == "assistant"
-            and (
-                "tattoo hysteria" in message.content.casefold()
-                or "tattoo" in message.content.casefold()
-            )
-            for message in history
+            message.role == "assistant" for message in history
         )
         user_context = any(
             message.role == "user"
