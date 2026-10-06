@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, cast
 
 from langchain_openai import ChatOpenAI
@@ -498,19 +499,26 @@ def test_full_artist_and_scheduling_thread_preserves_every_answer() -> None:
     assert artist_and_time.artist_preference_mode == "specific"
 
     schedule = process("28th Sept 9:00 AM")
-    assert schedule.date == "2026-09-28"
+    today = date.today()
+    expected_year = (
+        today.year
+        if today <= date(today.year, 9, 28)
+        else today.year + 1
+    )
+    expected_date = f"{expected_year}-09-28"
+    assert schedule.date == expected_date
     assert schedule.time == "09:00"
-    assert schedule.availability == "2026-09-28 at 09:00"
+    assert schedule.availability == f"{expected_date} at 09:00"
     assert schedule.missing_information == ["tattoo project type"]
     assert "To confirm what I have so far" in schedule.draft_reply
     assert "preferred artist: Hoss" in schedule.draft_reply
-    assert "28 September 2026 at 09:00" in schedule.draft_reply
+    assert f"28 September {expected_year} at 09:00" in schedule.draft_reply
     assert "One last detail" in schedule.draft_reply
 
     completed = process("new tattoo")
-    assert completed.date == "2026-09-28"
+    assert completed.date == expected_date
     assert completed.time == "09:00"
-    assert completed.availability == "2026-09-28 at 09:00"
+    assert completed.availability == f"{expected_date} at 09:00"
     assert completed.tattoo_project_type == "new tattoo"
     assert completed.missing_information == []
     assert completed.risk_level == "high"
