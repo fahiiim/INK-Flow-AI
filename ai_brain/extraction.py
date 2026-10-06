@@ -19,6 +19,10 @@ from .errors import AnalysisPipelineError
 from .email_cleaning import strip_quoted_email_content
 from .llm import get_chat_model
 from .prompts import EXTRACTION_SYSTEM_PROMPT, build_extraction_human_prompt
+from .review_policy import (
+    is_reference_led_style_request,
+    is_status_update_request,
+)
 from .schemas import (
     AppointmentType,
     ArtistPreferenceMode,
@@ -87,6 +91,9 @@ _COMPLAINT_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 _COMPLEX_ROUTING_NOTE = "Complex routing required"
+_REFERENCE_LED_STYLE_NOTE = (
+    "Style preference: reference-led design; no named style was inferred."
+)
 _DEFAULT_PLACEMENT_SIZE_RANGE = "5-20 cm"
 _PLACEMENT_SIZE_RANGES: dict[str, str] = {
     "scalp": "5-20 cm",
@@ -96,6 +103,7 @@ _PLACEMENT_SIZE_RANGES: dict[str, str] = {
     "eyebrow": "1-5 cm",
     "eyelid": "1-4 cm",
     "lip": "1-4 cm",
+    "tongue": "1-4 cm",
     "ear": "1-5 cm",
     "behind the ear": "2-6 cm",
     "neck": "5-15 cm",
@@ -330,6 +338,7 @@ _PLACEMENT_ALIASES: tuple[tuple[str, str], ...] = (
     ("ear", "ear"),
     ("lips", "lip"),
     ("lip", "lip"),
+    ("tongue", "tongue"),
     ("hand", "hand"),
     ("foot", "foot"),
     ("feet", "foot"),
@@ -404,16 +413,6 @@ _TIME_FIELD_TERMS = (
     " am",
     " pm",
 )
-_ARTIST_FIELD_TERMS = (
-    "artist",
-    "hoss",
-    "nina",
-    "lana",
-    "sandra",
-    "silva",
-    "sliva",
-    "no preference",
-)
 _APPOINTMENT_TYPE_FIELD_TERMS = (
     "appointment",
     "in-person",
@@ -442,15 +441,6 @@ _AVAILABILITY_FIELD_TERMS = (
     "anytime",
     "flexible",
     *_DATE_FIELD_TERMS,
-)
-_PROJECT_TYPE_FIELD_TERMS = (
-    "new tattoo",
-    "cover-up",
-    "cover up",
-    "continuation",
-    "continue",
-    "touch-up",
-    "touch up",
 )
 _TATTOO_SUBJECT_WORDS = (
     "anchor",
@@ -650,7 +640,10 @@ class TattooTextExtractor:
         )
         history_text = self._user_history_text(safe_chat_history)
         history_style_tags = self._detect_style_tags_from_text(history_text)
-        text_style_tags = current_style_tags or history_style_tags
+        stored_style_tags = self._state_style_tags(safe_db_state)
+        text_style_tags = (
+            current_style_tags or history_style_tags or stored_style_tags
+        )
         negated_style_tags = self._detect_negated_style_tags(
             normalized_message
         )
@@ -682,6 +675,14 @@ class TattooTextExtractor:
                 current_message=normalized_message,
                 recent_chat_history=safe_chat_history,
                 existing_db_state=safe_db_state,
+            )
+            resolved_output = self._apply_reference_led_style_note(
+                output=resolved_output,
+                current_message=normalized_message,
+                recent_chat_history=safe_chat_history,
+                new_image_urls=safe_image_urls,
+                existing_db_state=safe_db_state,
+                style_tags=normalized_tags,
             )
             if self._is_missing_tattoo_idea(resolved_output.tattoo_idea):
                 visual_idea = self._visual_subject_idea(safe_visual_subjects)
@@ -820,6 +821,55 @@ class TattooTextExtractor:
 
         return cast(list[StyleTag], cleaned)
 
+    def _state_style_tags(
+        self,
+        existing_db_state: dict[str, Any],
+    ) -> list[str]:
+        """Read previously confirmed style tags from canonical state."""
+        for record in self._state_records(existing_db_state):
+            value = record.get("style_tags")
+            if not isinstance(value, list):
+                continue
+            normalized = self._normalize_style_tags(
+                [item for item in value if isinstance(item, str)]
+            )
+            if normalized != ["unknown"]:
+                return list(normalized)
+        return []
+
+    def _apply_reference_led_style_note(
+        self,
+        output: _ExtractionSubset,
+        current_message: str,
+        recent_chat_history: list[Message],
+        new_image_urls: list[str],
+        existing_db_state: dict[str, Any],
+        style_tags: list[StyleTag],
+    ) -> _ExtractionSubset:
+        """Record image-led style without inventing a named technique."""
+        if any(
+            tag in _STYLE_TAGS_THAT_RESOLVE_PREFERENCE
+            for tag in style_tags
+        ):
+            return output
+        conversation = self._user_conversation_text(
+            current_message=current_message,
+            recent_chat_history=recent_chat_history,
+        )
+        has_reference = bool(new_image_urls) or self._has_reference_images(
+            existing_db_state
+        )
+        if not has_reference or not is_reference_led_style_request(
+            conversation
+        ):
+            return output
+        notes = " ".join(output.complexity_notes.split())
+        if _REFERENCE_LED_STYLE_NOTE.casefold() not in notes.casefold():
+            notes = " ".join(
+                part for part in (notes, _REFERENCE_LED_STYLE_NOTE) if part
+            )
+        return output.model_copy(update={"complexity_notes": notes})
+
     def _normalize_visual_subjects(self, subjects: list[str]) -> list[str]:
         """Normalize bounded visual subjects before prompt and state use."""
         normalized: list[str] = []
@@ -919,6 +969,10 @@ class TattooTextExtractor:
             current_message=current_message,
             recent_chat_history=recent_chat_history,
         )
+        reference_led_style = (
+            _REFERENCE_LED_STYLE_NOTE.casefold()
+            in llm_output.complexity_notes.casefold()
+        )
         checks: dict[MissingInformationItem, bool] = {
             "client full name": self._is_missing_client_name(
                 llm_output.client_name
@@ -932,7 +986,8 @@ class TattooTextExtractor:
             "tattoo style": not any(
                 tag in _STYLE_TAGS_THAT_RESOLVE_PREFERENCE
                 for tag in style_tags
-            ),
+            )
+            and not reference_led_style,
             "color preference": self._is_blank(llm_output.color_preference),
             "reference images": not (
                 new_image_urls
@@ -942,7 +997,7 @@ class TattooTextExtractor:
             ),
             "preferred artist": (
                 self._is_blank(llm_output.preferred_artist)
-                and llm_output.artist_preference_mode == "unknown"
+                and llm_output.artist_preference_mode != "no_preference"
             ),
             "appointment type": self._is_blank(llm_output.appointment_type),
             "preferred dates or availability": self._is_blank(
@@ -1012,6 +1067,14 @@ class TattooTextExtractor:
             current_message=current_message,
             recent_chat_history=recent_chat_history,
             existing_db_state=existing_db_state,
+        )
+        resolved_fallback = self._apply_reference_led_style_note(
+            output=resolved_fallback,
+            current_message=current_message,
+            recent_chat_history=recent_chat_history,
+            new_image_urls=new_image_urls,
+            existing_db_state=existing_db_state,
+            style_tags=style_tags,
         )
         missing = self._finalize_missing_information(
             llm_output=resolved_fallback,
@@ -1120,6 +1183,16 @@ class TattooTextExtractor:
             recent_chat_history=recent_chat_history,
             existing_db_state=existing_db_state,
         )
+        preferred_artist = self._resolve_preferred_artist(
+            current_message=current_message,
+            recent_chat_history=recent_chat_history,
+            existing_db_state=existing_db_state,
+        )
+        tattoo_project_type = self._resolve_project_type(
+            current_message=current_message,
+            recent_chat_history=recent_chat_history,
+            existing_db_state=existing_db_state,
+        )
         return _ExtractionSubset(
             client_name=self._resolve_client_name(
                 llm_value=llm_output.client_name,
@@ -1182,23 +1255,7 @@ class TattooTextExtractor:
                     field_terms=_TIME_FIELD_TERMS,
                 )
             ),
-            preferred_artist=self._normalize_preferred_artist(
-                self._resolve_context_field(
-                    llm_value=self._normalize_preferred_artist(
-                        llm_output.preferred_artist
-                    ),
-                    current_message=current_message,
-                    recent_chat_history=recent_chat_history,
-                    existing_db_state=existing_db_state,
-                    state_keys=(
-                        "preferred_artist",
-                        "requested_artist",
-                        "assigned_artist",
-                    ),
-                    value_extractor=self._extract_preferred_artist_from_text,
-                    field_terms=_ARTIST_FIELD_TERMS,
-                )
-            ),
+            preferred_artist=preferred_artist,
             appointment_type=self._normalize_appointment_type(
                 self._resolve_context_field(
                     llm_value=self._normalize_appointment_type(
@@ -1233,50 +1290,14 @@ class TattooTextExtractor:
                 value_extractor=self._extract_availability_from_text,
                 field_terms=_AVAILABILITY_FIELD_TERMS,
             ),
-            tattoo_project_type=self._normalize_project_type(
-                self._resolve_context_field(
-                    llm_value=self._normalize_project_type(
-                        llm_output.tattoo_project_type
-                    ),
-                    current_message=current_message,
-                    recent_chat_history=recent_chat_history,
-                    existing_db_state=existing_db_state,
-                    state_keys=(
-                        "tattoo_project_type",
-                        "tattoo_type",
-                        "project_type",
-                        "work_type",
-                    ),
-                    value_extractor=self._extract_project_type_from_text,
-                    field_terms=_PROJECT_TYPE_FIELD_TERMS,
-                )
-            ),
+            tattoo_project_type=tattoo_project_type,
             party_size=party_size,
             multi_entity_detected=multi_entity_detected,
             complexity_notes=complexity_notes,
             projects=llm_output.projects,
             size_description=size_description,
             artist_preference_mode=self._resolve_artist_preference_mode(
-                llm_value=llm_output.artist_preference_mode,
-                preferred_artist=self._normalize_preferred_artist(
-                    self._resolve_context_field(
-                        llm_value=self._normalize_preferred_artist(
-                            llm_output.preferred_artist
-                        ),
-                        current_message=current_message,
-                        recent_chat_history=recent_chat_history,
-                        existing_db_state=existing_db_state,
-                        state_keys=(
-                            "preferred_artist",
-                            "requested_artist",
-                            "assigned_artist",
-                        ),
-                        value_extractor=(
-                            self._extract_preferred_artist_from_text
-                        ),
-                        field_terms=_ARTIST_FIELD_TERMS,
-                    )
-                ),
+                preferred_artist=preferred_artist,
                 current_message=current_message,
                 recent_chat_history=recent_chat_history,
                 existing_db_state=existing_db_state,
@@ -1299,6 +1320,8 @@ class TattooTextExtractor:
         """Classify the latest client turn before choosing an intake action."""
         if _WITHDRAWAL_PATTERN.search(current_message):
             return "withdrawal"
+        if is_status_update_request(current_message):
+            return "status_update"
         if _COMPLAINT_PATTERN.search(current_message):
             return "complaint"
         if _SIZE_GUIDANCE_PATTERN.search(current_message):
@@ -1357,6 +1380,63 @@ class TattooTextExtractor:
             return stored_value
         return "" if self._is_blank(llm_value) else llm_value
 
+    def _resolve_preferred_artist(
+        self,
+        current_message: str,
+        recent_chat_history: list[Message],
+        existing_db_state: dict[str, Any],
+    ) -> PreferredArtist:
+        """Use only an explicit client selection or a persisted preference."""
+        current_value = self._extract_preferred_artist_from_text(
+            current_message
+        )
+        if current_value:
+            return cast(PreferredArtist, current_value)
+        for message in reversed(recent_chat_history):
+            if message.role != "user":
+                continue
+            history_value = self._extract_preferred_artist_from_text(
+                message.content
+            )
+            if history_value:
+                return cast(PreferredArtist, history_value)
+        stored_value = self._get_state_text(
+            existing_db_state,
+            ("preferred_artist", "requested_artist"),
+        )
+        normalized = self._normalize_preferred_artist(stored_value)
+        return cast(PreferredArtist, normalized)
+
+    def _resolve_project_type(
+        self,
+        current_message: str,
+        recent_chat_history: list[Message],
+        existing_db_state: dict[str, Any],
+    ) -> TattooProjectType:
+        """Use only an explicitly supplied or previously persisted type."""
+        current_value = self._extract_project_type_from_text(current_message)
+        if current_value:
+            return cast(TattooProjectType, current_value)
+        for message in reversed(recent_chat_history):
+            if message.role != "user":
+                continue
+            history_value = self._extract_project_type_from_text(
+                message.content
+            )
+            if history_value:
+                return cast(TattooProjectType, history_value)
+        stored_value = self._get_state_text(
+            existing_db_state,
+            (
+                "tattoo_project_type",
+                "tattoo_type",
+                "project_type",
+                "work_type",
+            ),
+        )
+        normalized = self._normalize_project_type(stored_value)
+        return cast(TattooProjectType, normalized)
+
     def _resolve_party_size(
         self,
         llm_value: int,
@@ -1396,11 +1476,10 @@ class TattooTextExtractor:
         existing_db_state: dict[str, Any],
     ) -> bool:
         """Detect and remember requests containing multiple routing entities."""
-        if (
-            llm_value
-            or not self._is_blank(llm_complexity_notes)
-            or party_size > 1
-            or len(llm_projects) > 1
+        if party_size > 1 or len(llm_projects) > 1:
+            return True
+        if llm_value and self._note_indicates_multiple_entities(
+            llm_complexity_notes
         ):
             return True
 
@@ -1422,19 +1501,29 @@ class TattooTextExtractor:
             return True
 
         for record in self._state_records(existing_db_state):
-            stored_flag = record.get("multi_entity_detected")
-            if stored_flag is True:
-                return True
-            if isinstance(stored_flag, str):
-                if stored_flag.strip().casefold() == "true":
-                    return True
             stored_projects = record.get("projects")
             if isinstance(stored_projects, list) and len(stored_projects) > 1:
                 return True
             stored_note = record.get("complexity_notes")
-            if isinstance(stored_note, str) and stored_note.strip():
+            if (
+                isinstance(stored_note, str)
+                and self._note_indicates_multiple_entities(stored_note)
+            ):
                 return True
         return False
+
+    def _note_indicates_multiple_entities(self, note: str) -> bool:
+        """Reject generic review notes as evidence of multiple entities."""
+        return bool(
+            re.search(
+                r"\b(?:multiple|several|two|three|four|five|six|seven|"
+                r"eight|nine|ten|\d{1,2})\s+"
+                r"(?:people|clients?|tattoos?|projects?|colou?rs?)\b|"
+                r"\bmatching\b.{0,60}\bexisting tattoo\b",
+                note,
+                flags=re.IGNORECASE,
+            )
+        )
 
     def _resolve_complexity_notes(
         self,
@@ -1583,7 +1672,6 @@ class TattooTextExtractor:
 
     def _resolve_artist_preference_mode(
         self,
-        llm_value: ArtistPreferenceMode,
         preferred_artist: str,
         current_message: str,
         recent_chat_history: list[Message],
@@ -1616,7 +1704,7 @@ class TattooTextExtractor:
             return "no_preference"
         if preferred_artist:
             return "specific"
-        return llm_value
+        return "unknown"
 
     def _resolve_pricing_requested(
         self,
@@ -2436,6 +2524,7 @@ class TattooTextExtractor:
         normalized = " ".join(text.casefold().split())
         if re.search(
             r"\b(?:recommend|suggest)\b.{0,45}\b(?:artist|best fit|who)\b|"
+            r"\bwhich\s+artist\b.{0,45}\b(?:recommend|suggest|best)\b|"
             r"\b(?:best fit|best artist)\b|"
             r"\b(?:do not|don't|dont)\s+know\b.{0,35}\bartist\b|"
             r"\bwho\b.{0,30}\b(?:best|better)\b|"
@@ -2647,20 +2736,27 @@ class TattooTextExtractor:
         matches: list[tuple[int, str]] = []
         no_preference_pattern = re.compile(
             r"\b(?:no\s+(?:artist\s+)?preference|any\s+artist|"
-            r"whoever\s+(?:is|you\s+think)|you\s+(?:can\s+)?choose|"
-            r"(?:recommend|suggest)\b.{0,35}\b(?:artist|best fit)|"
-            r"(?:best fit|best artist)|"
-            r"(?:do not|don't|dont)\s+know\b.{0,30}\bartist|"
-            r"who\b.{0,30}\b(?:best|better)\b|"
-            r"(?:best|better)\b.{0,30}\b(?:among them|for me)|"
-            r"(?:do not|don't|dont)\s+know\b.{0,25}"
-            r"\bthem\b.{0,20}\bpersonally)\b"
+            r"you\s+(?:can\s+)?choose)\b"
         )
         for match in no_preference_pattern.finditer(normalized):
             matches.append((match.start(), "No preference"))
         for alias, display_name in aliases.items():
-            for match in re.finditer(rf"\b{alias}\b", normalized):
-                matches.append((match.start(), display_name))
+            escaped = re.escape(alias)
+            selection_patterns = (
+                rf"\b(?:prefer|preferred|choose|chose|select|selected)\s+"
+                rf"(?:artist\s+)?{escaped}\b",
+                rf"\b(?:go|going)\s+with\s+{escaped}\b",
+                rf"\b(?:want|book)\s+(?:with\s+)?{escaped}\b",
+                rf"\b{escaped}\b.{{0,25}}\b(?:is|as)\s+my\s+"
+                rf"(?:preferred\s+)?artist\b",
+                rf"\bmy\s+(?:preferred\s+)?artist\s+(?:is|would\s+be)\s+"
+                rf"{escaped}\b",
+                rf"^(?:i(?:'d|\s+would)\s+(?:prefer\s+)?)?"
+                rf"{escaped}(?:\s+please)?[.!\s]*$",
+            )
+            for pattern in selection_patterns:
+                for match in re.finditer(pattern, normalized):
+                    matches.append((match.start(), display_name))
         if matches:
             return max(matches, key=lambda item: item[0])[1]
 
