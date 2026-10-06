@@ -96,3 +96,35 @@ def test_short_answer_in_tattoo_thread_is_eligible() -> None:
 def test_courtesy_only_email_does_not_trigger_another_reply() -> None:
     """A thank-you email must not create an unnecessary response loop."""
     assert not _classify("Thank you!")
+
+
+def test_proceed_confirmation_continues_established_tattoo_thread() -> None:
+    """A proceed instruction reaches review instead of being suppressed."""
+    history = [
+        {
+            "role": "user",
+            "content": "I want a 3 cm tattoo on my tongue.",
+        },
+        {
+            "role": "assistant",
+            "content": "The studio must review this specialised request.",
+        },
+    ]
+
+    assert _classify("Okay then proceed", history=history)
+
+
+def test_status_question_continues_established_tattoo_thread() -> None:
+    """A tattoo-thread status request reaches manual review safely."""
+    history = [
+        {
+            "role": "user",
+            "content": "I want a 3 cm tattoo on my tongue.",
+        },
+        {
+            "role": "assistant",
+            "content": "The studio team needs to review this request.",
+        },
+    ]
+
+    assert _classify("Is there any update?", history=history)
