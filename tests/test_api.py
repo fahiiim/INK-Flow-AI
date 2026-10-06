@@ -152,7 +152,8 @@ def test_analyze_endpoint_returns_strict_output() -> None:
         )
 
     assert response.status_code == 200
-    assert response.json() == output.model_dump(mode="json")
+    assert response.json() == output.model_dump(mode="json", by_alias=True)
+    assert response.json()["Auto-reply"] is False
     assert response.json()["date"] == "2026-09-04"
     assert response.json()["time"] == "14:30"
     assert brain.calls == [
