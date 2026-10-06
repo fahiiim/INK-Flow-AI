@@ -172,6 +172,18 @@ def test_output_includes_empty_scheduling_fields_when_unknown() -> None:
     assert result.time == ""
 
 
+def test_output_serializes_outlook_gate_as_auto_reply() -> None:
+    """The backend-facing response uses the requested exact JSON key."""
+    payload = _valid_output_payload()
+    payload["auto_reply"] = True
+
+    result = AIExtractionOutput.model_validate(payload)
+    serialized = result.model_dump(mode="json", by_alias=True)
+
+    assert serialized["Auto-reply"] is True
+    assert "auto_reply" not in serialized
+
+
 def test_required_intake_and_choice_options_match_studio_workflow() -> None:
     """The public intake taxonomy matches the configured client questions."""
     assert MISSING_INFORMATION_OPTIONS == (
