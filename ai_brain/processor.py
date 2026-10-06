@@ -18,6 +18,7 @@ from .decision_schemas import (
 )
 from .errors import AnalysisPipelineError
 from .extraction import TattooTextExtractor
+from .outlook_classification import OutlookInquiryClassifier
 from .routing import TattooRouter
 from .schemas import (
     AIExtractionOutput,
@@ -47,11 +48,15 @@ class StudioAIBrain:
         text_extractor: TattooTextExtractor | None = None,
         router: TattooRouter | None = None,
         decision_engine: StudioDecisionEngine | None = None,
+        outlook_classifier: OutlookInquiryClassifier | None = None,
     ) -> None:
         self.vision_analyzer = vision_analyzer or TattooVisionAnalyzer()
         self.text_extractor = text_extractor or TattooTextExtractor()
         self.router = router or TattooRouter()
         self.decision_engine = decision_engine or StudioDecisionEngine()
+        self.outlook_classifier = (
+            outlook_classifier or OutlookInquiryClassifier()
+        )
 
     def process_inquiry(
         self,
@@ -81,6 +86,16 @@ class StudioAIBrain:
         if self._is_automation_paused(inquiry):
             return self._build_automation_paused_output(inquiry)
 
+        outlook_classification = self.outlook_classifier.classify(inquiry)
+        if (
+            inquiry.message_source == "outlook"
+            and not outlook_classification.is_tattoo_inquiry
+        ):
+            return self._build_suppressed_outlook_output(
+                inquiry,
+                outlook_classification.reason,
+            )
+
         vision_output = self.vision_analyzer.analyze_images(
             inquiry.new_image_urls
         )
@@ -94,12 +109,21 @@ class StudioAIBrain:
             existing_db_state=inquiry.existing_db_state,
             recent_chat_history=inquiry.recent_chat_history,
         )
-        return self.router.route(
+        analysis = self.router.route(
             extracted,
             current_message=inquiry.current_message,
             recent_chat_history=inquiry.recent_chat_history,
             existing_db_state=inquiry.existing_db_state,
             message_source=inquiry.message_source,
+        )
+        return analysis.model_copy(
+            update={
+                "auto_reply": (
+                    inquiry.message_source == "outlook"
+                    and outlook_classification.is_tattoo_inquiry
+                    and analysis.auto_reply_allowed
+                )
+            }
         )
 
     def process_studio_decision(
@@ -158,8 +182,44 @@ class StudioAIBrain:
                 else _AUTOMATION_PAUSED_DRAFT
             ),
             auto_reply_allowed=False,
+            auto_reply=False,
             telegram_review_required=True,
         )
+
+    def _build_suppressed_outlook_output(
+        self,
+        inquiry: TattooInquiryInput,
+        reason: str,
+    ) -> AIExtractionOutput:
+        """Return an empty draft for Outlook mail outside tattoo intake."""
+        return AIExtractionOutput(
+            client_name=self._state_client_name(inquiry.existing_db_state),
+            tattoo_idea="",
+            style_tags=["unknown"],
+            placement="",
+            size_estimate_cm="",
+            color_preference="",
+            suggested_artist="Unclear",
+            confidence_level="high",
+            ai_reasoning=reason,
+            missing_information=[],
+            risk_level="low",
+            draft_reply="",
+            auto_reply_allowed=False,
+            auto_reply=False,
+            telegram_review_required=False,
+        )
+
+    def _state_client_name(self, state: dict[str, Any]) -> str:
+        """Read a client name without treating unrelated mail as intake."""
+        for record in (state.get("lead"), state.get("intake"), state):
+            if not isinstance(record, dict):
+                continue
+            for key in ("name", "client_name", "lead_name"):
+                value = record.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return ""
 
     def _build_automation_paused_decision(
         self,
