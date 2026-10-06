@@ -65,12 +65,22 @@ concise conversational reply format. Outlook and Gmail quoted reply threads,
 including common signatures, are removed before extraction so previous studio
 questions and sign-offs cannot be mistaken for new client answers.
 
-Group inquiries are represented by `party_size` and `projects`. Each project
-can keep its own recipient, idea, style, placement, size, colour, project type,
-and reference images. Qualitative answers such as `hand-sized` are stored in
-`size_description`; an explicit `not sure` is accepted and flagged for staff
-help instead of being asked repeatedly. `artist_preference_mode` distinguishes
-a named artist from requests such as "please recommend the best fit".
+Multiple tattoos remain in the flat response contract. `tattoo_idea` preserves
+all designs, while placement and shared details remain top-level fields. The
+public response does not contain a nested `projects` field. Qualitative answers
+such as `hand-sized` are stored in `size_description`; an explicit `not sure`
+is accepted and flagged for staff help instead of being asked repeatedly.
+`artist_preference_mode` distinguishes a named artist from requests such as
+"please recommend the best fit".
+
+For Outlook, the response includes the exact JSON key `Auto-reply`. It is true
+only for a recognized tattoo inquiry or an established tattoo-intake follow-up
+that is also safe to send automatically. It is false for unrelated mail,
+automated notifications, newsletters, courtesy-only replies, non-Outlook
+sources, high-risk inquiries, and no-reply senders. The backend should provide
+the real sender address as `existing_db_state.sender_email` or
+`existing_db_state.lead.email`, and may provide the subject as
+`existing_db_state.email_subject`.
 
 The structured `appointment_type` response field is either `online`,
 `studio_visit`, or an empty string while it is still unknown. Client-facing
