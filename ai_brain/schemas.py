@@ -427,7 +427,11 @@ class TattooExtractionDraft(BaseModel):
 class AIExtractionOutput(BaseModel):
     """Final strict JSON contract returned to backend services."""
 
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+        str_strip_whitespace=True,
+    )
 
     client_name: str = Field(
         default="",
@@ -512,6 +516,14 @@ class AIExtractionOutput(BaseModel):
     auto_reply_allowed: bool = Field(
         description="Whether backend automation may send the draft directly.",
     )
+    auto_reply: bool = Field(
+        default=False,
+        alias="Auto-reply",
+        description=(
+            "Whether this is a reply-capable Outlook tattoo inquiry that "
+            "the backend may send automatically."
+        ),
+    )
     telegram_review_required: bool = Field(
         description="Whether the draft must be routed to staff in Telegram.",
     )
@@ -545,6 +557,8 @@ class AIExtractionOutput(BaseModel):
         """Forbid high-risk outputs from entering the auto-reply channel."""
         if self.risk_level == "high" and self.auto_reply_allowed:
             raise ValueError("High-risk drafts cannot allow auto-replies.")
+        if self.auto_reply and not self.auto_reply_allowed:
+            raise ValueError("Auto-reply requires auto_reply_allowed.")
         if self.risk_level == "high" and not self.telegram_review_required:
             raise ValueError("High-risk drafts require Telegram review.")
         return self
