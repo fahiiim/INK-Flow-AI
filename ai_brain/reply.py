@@ -6,6 +6,11 @@ import re
 from collections.abc import Mapping, Sequence
 from datetime import date as calendar_date
 
+from .review_policy import (
+    SPECIALISED_PLACEMENT_REASON,
+    STATUS_UPDATE_REASON,
+    is_proceed_confirmation,
+)
 from .schemas import (
     ARTIST_PREFERENCE_OPTIONS,
     MISSING_INFORMATION_OPTIONS,
@@ -623,6 +628,63 @@ class ConversationReplyComposer:
             [salutation, acknowledgement, "Kind regards,\nTattoo Hysteria"]
         )
 
+    def compose_staff_review(
+        self,
+        extracted: TattooExtractionDraft,
+        current_message: str,
+        message_source: str,
+        existing_db_state: Mapping[str, object] | None,
+        review_reasons: Sequence[str],
+    ) -> str:
+        """Pause intake and explain a real staff escalation safely."""
+        reasons = set(review_reasons)
+        sections: list[str] = []
+        if message_source == "outlook":
+            sections.append(
+                self._outlook_salutation(
+                    existing_db_state,
+                    extracted.client_name,
+                )
+            )
+
+        if STATUS_UPDATE_REASON in reasons:
+            sections.append(
+                "I can’t confirm a live update from the information "
+                "available in this conversation. I’ve flagged your message "
+                "for a studio team member to check and respond with the "
+                "current status."
+            )
+            if SPECIALISED_PLACEMENT_REASON in reasons:
+                sections.append(self._specialised_placement_notice())
+        else:
+            acknowledgement = (
+                "Thanks for confirming."
+                if is_proceed_confirmation(current_message)
+                else "Thank you for sharing the details."
+            )
+            sections.append(acknowledgement)
+            summary = self._human_request_summary(extracted)
+            if summary:
+                sections.append(summary)
+            sections.append(
+                "I’ve flagged your request for review by the studio team."
+            )
+            if SPECIALISED_PLACEMENT_REASON in reasons:
+                sections.append(self._specialised_placement_notice())
+
+        if message_source == "outlook":
+            sections.append("Kind regards,\nTattoo Hysteria")
+        return "\n\n".join(sections)
+
+    def _specialised_placement_notice(self) -> str:
+        """Return the fixed, non-medical tongue-placement review notice."""
+        return (
+            "Tongue tattooing is a specialised request. Before discussing "
+            "an artist, price, or booking, the studio team must confirm "
+            "whether this service is offered and whether the request can "
+            "proceed. Nothing has been approved or booked yet."
+        )
+
     def _outlook_opening(
         self,
         current_message: str,
@@ -957,8 +1019,8 @@ class ConversationReplyComposer:
         missing_information: list[str],
         current_message: str,
     ) -> list[str]:
-        """Avoid requesting an artist choice while answering a roster question."""
-        if not _ARTIST_ROSTER_PATTERN.search(current_message):
+        """Answer artist guidance before requesting an explicit selection."""
+        if not _ARTIST_GUIDANCE_PATTERN.search(current_message):
             return missing_information
         return [
             item for item in missing_information if item != "preferred artist"
