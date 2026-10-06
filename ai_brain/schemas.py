@@ -102,6 +102,7 @@ ClientIntent = Literal[
     "size_guidance",
     "artist_guidance",
     "availability_question",
+    "status_update",
     "complaint",
     "withdrawal",
 ]
@@ -548,8 +549,11 @@ class AIExtractionOutput(BaseModel):
             return value
         payload = dict(value)
         is_high_risk = payload.get("risk_level") == "high"
-        payload.setdefault("auto_reply_allowed", not is_high_risk)
-        payload.setdefault("telegram_review_required", is_high_risk)
+        requires_review = (
+            is_high_risk or payload.get("staff_review_required") is True
+        )
+        payload.setdefault("auto_reply_allowed", not requires_review)
+        payload.setdefault("telegram_review_required", requires_review)
         return payload
 
     @model_validator(mode="after")
@@ -561,6 +565,10 @@ class AIExtractionOutput(BaseModel):
             raise ValueError("Auto-reply requires auto_reply_allowed.")
         if self.risk_level == "high" and not self.telegram_review_required:
             raise ValueError("High-risk drafts require Telegram review.")
+        if self.staff_review_required and self.auto_reply_allowed:
+            raise ValueError("Staff-review drafts cannot allow auto-replies.")
+        if self.staff_review_required and not self.telegram_review_required:
+            raise ValueError("Staff-review drafts require Telegram review.")
         return self
 
 
