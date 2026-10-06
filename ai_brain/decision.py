@@ -168,6 +168,7 @@ class StudioDecisionEngine:
                 "ai_reasoning": reasoning,
                 "risk_level": "high",
                 "auto_reply_allowed": False,
+                "auto_reply": False,
                 "telegram_review_required": True,
             }
         )
