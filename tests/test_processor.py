@@ -213,6 +213,7 @@ def test_process_inquiry_low_risk_fine_line_request() -> None:
     assert result.risk_level == "low"
     assert result.style_tags == ["fine-line", "minimal"]
     assert result.size_estimate_cm == "10"
+    assert result.auto_reply is True
     assert vision.calls == [["https://example.com/new-reference.jpg"]]
     assert extraction.calls[0]["style_tags"] == ["fine-line", "minimal"]
     assert extraction.calls[0]["current_message"] == (
@@ -240,6 +241,64 @@ def test_process_inquiry_low_risk_fine_line_request() -> None:
     assert result.draft_reply == (
         "Thanks for sharing the details. This looks like a great "
         "fine-line piece for Nina."
+    )
+
+
+def test_unrelated_outlook_email_stops_before_ai_pipeline() -> None:
+    """Unrelated mail returns Auto-reply false without generating a draft."""
+    vision = StubVisionAnalyzer(tags=["unknown"])
+    extraction = StubTextExtractor(
+        draft=TattooExtractionDraft(
+            tattoo_idea="Unused",
+            style_tags=["unknown"],
+            placement="",
+            size_estimate_cm="",
+            color_preference="",
+        )
+    )
+    router = StubRouter(output=_unused_output())
+    brain = StudioAIBrain(
+        vision_analyzer=vision,
+        text_extractor=extraction,
+        router=router,
+    )
+
+    result = brain.process_inquiry(
+        current_message=(
+            "We provide SEO and marketing services. Would you like a demo?"
+        ),
+        existing_db_state={
+            "lead": {
+                "name": "Marketing Team",
+                "email": "sales@example.com",
+                "source": "outlook",
+            }
+        },
+        message_source="outlook",
+    )
+
+    assert result.auto_reply is False
+    assert result.auto_reply_allowed is False
+    assert result.draft_reply == ""
+    assert "unrelated" in result.ai_reasoning.casefold()
+    assert vision.calls == []
+    assert extraction.calls == []
+    assert router.calls == []
+
+
+def _unused_output() -> AIExtractionOutput:
+    """Return a valid output that must never be used by the short circuit."""
+    return AIExtractionOutput(
+        tattoo_idea="Unused",
+        style_tags=["unknown"],
+        placement="",
+        size_estimate_cm="",
+        color_preference="",
+        suggested_artist="Unclear",
+        confidence_level="low",
+        ai_reasoning="Unused",
+        risk_level="low",
+        draft_reply="Unused",
     )
 
 
