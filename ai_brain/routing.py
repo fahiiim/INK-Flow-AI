@@ -25,6 +25,12 @@ from .prompts import (
     build_routing_human_prompt,
 )
 from .reply import ConversationReplyComposer
+from .review_policy import (
+    SPECIALISED_PLACEMENT_REASON,
+    STATUS_UPDATE_REASON,
+    is_status_update_request,
+    specialised_placement_requires_review,
+)
 from .routing_rules import RoutingRule, RoutingRuleEngine
 from .schemas import (
     ARTIST_PREFERENCE_OPTIONS,
@@ -150,13 +156,19 @@ class TattooRouter:
         pending_review_reasons = self._review_reasons(
             extracted,
             artist_decision,
+            current_message,
         )
-        staff_review_required = risk_level == "high"
+        immediate_review = self._requires_immediate_staff_review(
+            pending_review_reasons
+        )
+        staff_review_required = risk_level == "high" or immediate_review
         review_reasons = (
             pending_review_reasons if staff_review_required else []
         )
         if extracted.conversation_status == "closed":
             intake_status = "closed"
+        elif staff_review_required:
+            intake_status = "needs_staff_review"
         elif extracted.missing_information:
             intake_status = "collecting_info"
         else:
@@ -166,6 +178,13 @@ class TattooRouter:
             llm_output = _RoutingLLMOutput(
                 confidence_level="high",
                 ai_reasoning="The client withdrew from the inquiry.",
+            )
+        elif immediate_review:
+            llm_output = _RoutingLLMOutput(
+                confidence_level="low",
+                ai_reasoning=(
+                    "The request is paused for deterministic staff review."
+                ),
             )
         else:
             llm_output = self._routing_llm_output(
@@ -187,6 +206,11 @@ class TattooRouter:
             risk_level=risk_level,
             existing_db_state=db_state,
             message_source=message_source,
+            review_reasons=review_reasons,
+        )
+
+        auto_reply_allowed = (
+            risk_level == "low" and not staff_review_required
         )
 
         return AIExtractionOutput(
@@ -220,9 +244,9 @@ class TattooRouter:
             missing_information=extracted.missing_information,
             risk_level=risk_level,
             draft_reply=draft_reply,
-            auto_reply_allowed=risk_level == "low",
-            auto_reply=(message_source == "outlook" and risk_level == "low"),
-            telegram_review_required=risk_level == "high",
+            auto_reply_allowed=auto_reply_allowed,
+            auto_reply=(message_source == "outlook" and auto_reply_allowed),
+            telegram_review_required=staff_review_required,
         )
 
     def _generate_draft_reply(
@@ -234,6 +258,7 @@ class TattooRouter:
         risk_level: RiskLevel,
         existing_db_state: dict[str, Any],
         message_source: MessageSource,
+        review_reasons: list[str],
     ) -> str:
         """Generate and strictly validate a client-facing draft reply."""
         suggested_artist_details = self._artist_profile_summary(
@@ -245,6 +270,15 @@ class TattooRouter:
                 message_source=message_source,
                 existing_db_state=existing_db_state,
                 client_name=extracted.client_name,
+            )
+
+        if self._requires_immediate_staff_review(review_reasons):
+            return self._reply_composer.compose_staff_review(
+                extracted=extracted,
+                current_message=current_message,
+                message_source=message_source,
+                existing_db_state=existing_db_state,
+                review_reasons=review_reasons,
             )
 
         if message_source == "outlook":
@@ -499,6 +533,15 @@ class TattooRouter:
         extracted: TattooExtractionDraft,
     ) -> _ArtistRoutingDecision:
         """Select an artist from cold start, configured rules, or history."""
+        if specialised_placement_requires_review(extracted.placement):
+            return _ArtistRoutingDecision(
+                suggested_artist="Unclear",
+                confidence_level="low",
+                reasoning=(
+                    "Studio approval is required for this specialised "
+                    "placement before an artist can be recommended."
+                ),
+            )
         explicit = self._explicit_artist_decision(extracted)
         if explicit is not None:
             return explicit
@@ -859,9 +902,17 @@ class TattooRouter:
         self,
         extracted: TattooExtractionDraft,
         artist_decision: _ArtistRoutingDecision,
+        current_message: str,
     ) -> list[str]:
-        """Identify complexity reasons to expose once intake is complete."""
+        """Identify complexity and immediate staff-review reasons."""
         reasons: list[str] = []
+        if specialised_placement_requires_review(extracted.placement):
+            reasons.append(SPECIALISED_PLACEMENT_REASON)
+        if (
+            extracted.client_intent == "status_update"
+            or is_status_update_request(current_message)
+        ):
+            reasons.append(STATUS_UPDATE_REASON)
         if extracted.multi_entity_detected:
             reasons.append("complex_routing_required")
         if extracted.party_size > 1 or len(extracted.projects) > 1:
@@ -874,6 +925,17 @@ class TattooRouter:
         ):
             reasons.append("artist_recommendation_unresolved")
         return reasons
+
+    def _requires_immediate_staff_review(
+        self,
+        review_reasons: list[str],
+    ) -> bool:
+        """Return whether intake must pause before ordinary collection."""
+        immediate_reasons = {
+            SPECIALISED_PLACEMENT_REASON,
+            STATUS_UPDATE_REASON,
+        }
+        return bool(immediate_reasons.intersection(review_reasons))
 
     def _routing_llm_output(
         self,
