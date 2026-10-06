@@ -221,6 +221,7 @@ class TattooRouter:
             risk_level=risk_level,
             draft_reply=draft_reply,
             auto_reply_allowed=risk_level == "low",
+            auto_reply=(message_source == "outlook" and risk_level == "low"),
             telegram_review_required=risk_level == "high",
         )
 
