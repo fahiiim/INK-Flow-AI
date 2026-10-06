@@ -88,12 +88,12 @@ def test_group_watercolor_request_keeps_separate_person_details() -> None:
     assert second.size_estimate_cm == "10-15 cm"
     assert second.size_description == "hand-sized"
     assert second.size_status == "approximate"
-    assert second.preferred_artist == "No preference"
+    assert second.preferred_artist == ""
     assert second.artist_preference_mode == "recommend"
     assert second.pricing_requested is True
     assert "size in cm" not in second.missing_information
     assert "placement" in second.missing_information
-    assert "preferred artist" not in second.missing_information
+    assert "preferred artist" in second.missing_information
     assert [project.color_preference for project in second.projects] == [
         "red",
         "blue",
@@ -463,9 +463,9 @@ def test_full_artist_and_scheduling_thread_preserves_every_answer() -> None:
     )
     assert recommendation.size_estimate_cm == "10-15 cm"
     assert recommendation.size_description == ""
-    assert recommendation.preferred_artist == "No preference"
+    assert recommendation.preferred_artist == ""
     assert recommendation.artist_preference_mode == "recommend"
-    assert "preferred artist" not in recommendation.missing_information
+    assert "preferred artist" in recommendation.missing_information
     assert "recommend Hoss" in recommendation.draft_reply
     assert "tattooed professionally since 2005" in (
         recommendation.draft_reply
@@ -474,8 +474,8 @@ def test_full_artist_and_scheduling_thread_preserves_every_answer() -> None:
 
     appointment = process("studio visit")
     assert appointment.appointment_type == "studio_visit"
-    assert "preferred artist" not in appointment.missing_information
-    assert "Do you have a preferred artist?" not in appointment.draft_reply
+    assert "preferred artist" in appointment.missing_information
+    assert "Do you have a preferred artist?" in appointment.draft_reply
 
     repeated_artist_question = process(
         "I don't know them personally; who would be the best for me?"
