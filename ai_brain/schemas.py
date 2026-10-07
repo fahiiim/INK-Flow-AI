@@ -22,7 +22,16 @@ STYLE_TAG_OPTIONS: tuple[str, ...] = (
     "watercolor",
     "minimal",
     "floral",
+    "botanical",
+    "illustrative",
+    "fine-illustrative",
+    "abstract",
+    "blackwork",
+    "realism",
     "micro-realism",
+    "pixel-art",
+    "new-school",
+    "neo-traditional",
     "black-and-grey",
     "calligraphy",
     "traditional",
@@ -45,11 +54,12 @@ MISSING_INFORMATION_OPTIONS: tuple[str, ...] = (
 )
 
 ARTIST_PREFERENCE_OPTIONS: tuple[str, ...] = (
-    "Hoss",
-    "Nina",
     "Lana",
+    "Nina",
+    "Hossam",
+    "Sliva",
     "Sandra",
-    "Silva",
+    "Mila",
 )
 
 MESSAGE_SOURCE_OPTIONS: tuple[str, ...] = (
@@ -69,7 +79,16 @@ StyleTag = Literal[
     "watercolor",
     "minimal",
     "floral",
+    "botanical",
+    "illustrative",
+    "fine-illustrative",
+    "abstract",
+    "blackwork",
+    "realism",
     "micro-realism",
+    "pixel-art",
+    "new-school",
+    "neo-traditional",
     "black-and-grey",
     "calligraphy",
     "traditional",
@@ -115,11 +134,14 @@ IntakeStatus = Literal[
 ]
 PreferredArtist = Literal[
     "",
+    "Hossam",
     "Hoss",
     "Nina",
     "Lana",
     "Sandra",
+    "Sliva",
     "Silva",
+    "Mila",
     "No preference",
 ]
 AppointmentType = Literal["", "online", "studio_visit"]
@@ -147,6 +169,18 @@ MissingInformationItem = Literal[
     "preferred date",
     "preferred time",
 ]
+
+
+def _canonical_preferred_artist(value: object) -> object:
+    """Normalize legacy studio artist names without rejecting old records."""
+    if not isinstance(value, str):
+        return value
+    aliases = {
+        "hoss": "Hossam",
+        "silva": "Sliva",
+    }
+    normalized = value.strip()
+    return aliases.get(normalized.casefold(), normalized)
 
 
 class Message(BaseModel):
@@ -418,6 +452,12 @@ class TattooExtractionDraft(BaseModel):
         """Require a real calendar date in the public YYYY-MM-DD format."""
         return _validate_preferred_date(value)
 
+    @field_validator("preferred_artist", mode="before")
+    @classmethod
+    def normalize_preferred_artist(cls, value: object) -> object:
+        """Convert legacy artist names to current client-facing names."""
+        return _canonical_preferred_artist(value)
+
     @field_validator("time")
     @classmethod
     def validate_time_format(cls, value: str) -> str:
@@ -534,6 +574,12 @@ class AIExtractionOutput(BaseModel):
     def validate_date_format(cls, value: str) -> str:
         """Require a real calendar date in the public YYYY-MM-DD format."""
         return _validate_preferred_date(value)
+
+    @field_validator("preferred_artist", mode="before")
+    @classmethod
+    def normalize_preferred_artist(cls, value: object) -> object:
+        """Convert legacy artist names to current client-facing names."""
+        return _canonical_preferred_artist(value)
 
     @field_validator("time")
     @classmethod
