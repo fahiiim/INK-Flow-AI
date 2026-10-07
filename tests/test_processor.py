@@ -423,3 +423,79 @@ def test_process_inquiry_request_with_no_images() -> None:
     assert vision.calls == [[]]
     assert extraction.calls[0]["new_image_urls"] == []
     assert len(router.calls) == 1
+
+
+def _pricing_question_brain(risk_level: str) -> StudioAIBrain:
+    """Build a brain whose router returns a fixed WhatsApp-ready output."""
+    draft = TattooExtractionDraft(
+        tattoo_idea="",
+        style_tags=["unknown"],
+        placement="",
+        size_estimate_cm="",
+        color_preference="",
+    )
+    return StudioAIBrain(
+        vision_analyzer=StubVisionAnalyzer(tags=["unknown"]),
+        text_extractor=StubTextExtractor(draft=draft),
+        router=StubRouter(
+            output=AIExtractionOutput(
+                tattoo_idea="",
+                style_tags=["unknown"],
+                placement="",
+                size_estimate_cm="",
+                color_preference="",
+                suggested_artist="Unclear",
+                confidence_level="low",
+                ai_reasoning="Pricing question before intake details.",
+                missing_information=(
+                    ["tattoo idea", "size in cm"]
+                    if risk_level == "low"
+                    else []
+                ),
+                risk_level=risk_level,
+                draft_reply="What design do you have in mind?",
+            )
+        ),
+    )
+
+
+def test_whatsapp_safe_reply_sets_auto_reply_true() -> None:
+    """WhatsApp drafts that are safe to send enable Auto-reply."""
+    result = _pricing_question_brain("low").process_inquiry(
+        current_message=(
+            "Hello, I need a tattoo. Could you please let me know about "
+            "average price range?"
+        ),
+        existing_db_state={
+            "lead": {"name": "Fahim Sarker", "source": "whatsapp"},
+            "intake": {"source": "whatsapp"},
+        },
+        message_source="whatsapp",
+    )
+
+    assert result.auto_reply_allowed is True
+    assert result.auto_reply is True
+    assert result.model_dump(mode="json", by_alias=True)["Auto-reply"] is True
+
+
+def test_whatsapp_staff_review_keeps_auto_reply_false() -> None:
+    """High-risk WhatsApp drafts still go to staff instead of the client."""
+    result = _pricing_question_brain("high").process_inquiry(
+        current_message="Everything is complete, please book me.",
+        message_source="whatsapp",
+    )
+
+    assert result.telegram_review_required is True
+    assert result.auto_reply_allowed is False
+    assert result.auto_reply is False
+
+
+def test_non_reply_channels_keep_auto_reply_false() -> None:
+    """Sources other than WhatsApp and Outlook remain manual."""
+    result = _pricing_question_brain("low").process_inquiry(
+        current_message="Hello, I need a tattoo.",
+        message_source="vcita",
+    )
+
+    assert result.auto_reply_allowed is True
+    assert result.auto_reply is False

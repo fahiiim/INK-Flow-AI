@@ -75,11 +75,13 @@ is accepted and flagged for staff help instead of being asked repeatedly.
 `preferred_artist`; that field changes only when the client selects an artist
 or explicitly says that they have no preference.
 
-For Outlook, the response includes the exact JSON key `Auto-reply`. It is true
-only for a recognized tattoo inquiry or an established tattoo-intake follow-up
+Every response includes the exact JSON key `Auto-reply`. For WhatsApp it
+equals `auto_reply_allowed`, so it is true whenever the draft is safe to send
+and false for high-risk or staff-review inquiries. For Outlook it is true only
+for a recognized tattoo inquiry or an established tattoo-intake follow-up
 that is also safe to send automatically. It is false for unrelated mail,
-automated notifications, newsletters, courtesy-only replies, non-Outlook
-sources, high-risk inquiries, and no-reply senders. The backend should provide
+automated notifications, newsletters, courtesy-only replies, other sources
+such as `vcita`, high-risk inquiries, and no-reply senders. The backend should provide
 the real sender address as `existing_db_state.sender_email` or
 `existing_db_state.lead.email`, and may provide the subject as
 `existing_db_state.email_subject`.

@@ -257,7 +257,10 @@ class TattooRouter:
             risk_level=risk_level,
             draft_reply=draft_reply,
             auto_reply_allowed=auto_reply_allowed,
-            auto_reply=(message_source == "outlook" and auto_reply_allowed),
+            auto_reply=(
+                message_source in {"outlook", "whatsapp"}
+                and auto_reply_allowed
+            ),
             telegram_review_required=staff_review_required,
         )
 

@@ -116,12 +116,14 @@ class StudioAIBrain:
             existing_db_state=inquiry.existing_db_state,
             message_source=inquiry.message_source,
         )
+        is_reply_channel = inquiry.message_source == "whatsapp" or (
+            inquiry.message_source == "outlook"
+            and outlook_classification.is_tattoo_inquiry
+        )
         return analysis.model_copy(
             update={
                 "auto_reply": (
-                    inquiry.message_source == "outlook"
-                    and outlook_classification.is_tattoo_inquiry
-                    and analysis.auto_reply_allowed
+                    is_reply_channel and analysis.auto_reply_allowed
                 )
             }
         )
