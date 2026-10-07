@@ -161,7 +161,7 @@ def test_incomplete_request_follows_the_required_question_order() -> None:
     assert "preferred date" not in reply.casefold()
 
 
-def test_whatsapp_preferred_artist_question_lists_five_artists() -> None:
+def test_whatsapp_preferred_artist_question_lists_six_artists() -> None:
     """The controlled WhatsApp artist question exposes only studio artists."""
     extracted = TattooExtractionDraft(
         tattoo_idea="Fine-line flower",
@@ -180,8 +180,8 @@ def test_whatsapp_preferred_artist_question_lists_five_artists() -> None:
     )
 
     assert reply.endswith(
-        "Do you have a preferred artist? Please choose Hoss, Nina, Lana, "
-        "Sandra, Silva, or say no preference."
+        "Do you have a preferred artist? Please choose Lana, Nina, Hossam, "
+        "Sliva, Sandra, Mila, or say no preference."
     )
 
 
@@ -231,8 +231,10 @@ def test_whatsapp_style_question_lists_every_supported_style() -> None:
 
     assert reply.endswith(
         "What tattoo style would you prefer? Please choose one or more from: "
-        "fine-line, watercolor, minimal, floral, micro-realism, "
-        "black-and-grey, calligraphy, traditional, geometric."
+        "fine-line, watercolor, minimal, floral, botanical, illustrative, "
+        "fine-illustrative, abstract, blackwork, realism, micro-realism, "
+        "pixel-art, new-school, neo-traditional, black-and-grey, calligraphy, "
+        "traditional, geometric."
     )
 
 
