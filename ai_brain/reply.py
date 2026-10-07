@@ -789,17 +789,15 @@ class ConversationReplyComposer:
         extracted: TattooExtractionDraft,
         history: Sequence[Message],
     ) -> str:
-        """Respond helpfully when the client asks the artist to choose a size."""
+        """Reassure an uncertain client without delegating size selection."""
         if (
             extracted.client_intent != "size_guidance"
             and extracted.size_description != "not sure"
         ):
             return ""
-        guidance = (
-            "It is completely fine not to know the exact size yet. The artist "
-            "can recommend suitable dimensions after reviewing the reference "
-            "and how the design should sit on the body."
-        )
+        if extracted.size_status == "approximate":
+            return ""
+        guidance = "No problem if you do not know the exact size yet."
         if self._assistant_history_contains(guidance, history):
             return ""
         return guidance
@@ -1132,6 +1130,18 @@ class ConversationReplyComposer:
         ):
             return ""
         natural_estimate = re.sub(r"(?<=\d)-(?=\d)", " to ", estimate)
+        if "reference-informed planning estimate" in (
+            extracted.complexity_notes.casefold()
+        ):
+            placement = extracted.placement.strip()
+            placement_context = (
+                f" for the requested {placement} placement" if placement else ""
+            )
+            return (
+                "Based on your reference image"
+                f"{placement_context}, I'd suggest around {natural_estimate}. "
+                "Does that sound right, or would you like to adjust it?"
+            )
         return (
             "Just to confirm, does an estimated size of around "
             f"{natural_estimate} sound right?"
