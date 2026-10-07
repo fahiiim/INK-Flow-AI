@@ -62,7 +62,7 @@ class FakeVectorStore:
 def _history_example(
     example_id: str,
     artist_key: str,
-    style: StyleTag = "traditional",
+    style: StyleTag = "watercolor",
 ) -> DecisionHistoryExample:
     """Build one verified historical assignment for routing tests."""
     return DecisionHistoryExample.model_validate(
@@ -85,7 +85,7 @@ def _history_example(
 
 def _history_records(
     assignments: list[str],
-    style: StyleTag = "traditional",
+    style: StyleTag = "watercolor",
 ) -> list[DecisionHistoryExample]:
     """Build uniquely identified records for the supplied artist keys."""
     return [
@@ -101,12 +101,12 @@ def _history_records(
 def _analysis() -> AIExtractionOutput:
     """Build a complete analysis for internal decision-engine tests."""
     return AIExtractionOutput(
-        tattoo_idea="Traditional eagle tattoo",
-        style_tags=["traditional"],
+        tattoo_idea="Watercolor eagle tattoo",
+        style_tags=["watercolor"],
         placement="upper arm",
         size_estimate_cm="15cm",
         color_preference="color",
-        suggested_artist="Hoss",
+        suggested_artist="Hossam",
         confidence_level="medium",
         ai_reasoning="Initial routing result.",
         missing_information=[],
@@ -118,8 +118,8 @@ def _analysis() -> AIExtractionOutput:
 def _draft() -> TattooExtractionDraft:
     """Build extracted features that do not match the default custom rules."""
     return TattooExtractionDraft(
-        tattoo_idea="Traditional eagle tattoo",
-        style_tags=["traditional"],
+        tattoo_idea="Watercolor eagle tattoo",
+        style_tags=["watercolor"],
         placement="upper arm",
         size_estimate_cm="15cm",
         color_preference="color",
@@ -132,7 +132,7 @@ def _decision_context() -> StudioDecisionContext:
     return StudioDecisionContext(
         channel="whatsapp",
         artist_options=[
-            ArtistOption(key="hoss", display_name="Hoss"),
+            ArtistOption(key="hoss", display_name="Hossam"),
             ArtistOption(key="sliva", display_name="Sliva"),
         ],
     )
@@ -168,12 +168,12 @@ def test_cold_start_enforcement(record_count: int) -> None:
 
     result = engine.decide(
         analysis=_analysis(),
-        current_message="I want a traditional eagle tattoo.",
+        current_message="I want a watercolor eagle tattoo.",
         context=_decision_context(),
     )
     routed = _router(vector_store).route(
         extracted=_draft(),
-        current_message="I want a traditional eagle tattoo.",
+        current_message="I want a watercolor eagle tattoo.",
     )
     expected_reasoning = (
         "Cold start mode: manual assignment required "
@@ -183,7 +183,7 @@ def test_cold_start_enforcement(record_count: int) -> None:
     assert result.analysis.suggested_artist == "Unclear"
     assert result.analysis.risk_level == "high"
     assert result.analysis.ai_reasoning == expected_reasoning
-    assert routed.suggested_artist == "Hoss"
+    assert routed.suggested_artist == "Hossam"
     assert routed.risk_level == "high"
     assert "configured specialties" in routed.ai_reasoning
     assert result.artist_suggestion.artist_key is None
@@ -203,10 +203,10 @@ def test_post_cold_start_routing() -> None:
 
     result = _router(vector_store).route(
         extracted=_draft(),
-        current_message="I want a traditional eagle tattoo.",
+        current_message="I want a watercolor eagle tattoo.",
     )
 
-    assert result.suggested_artist == "Hoss"
+    assert result.suggested_artist == "Hossam"
     assert "6 similar historical cases" in result.ai_reasoning
     assert len(vector_store.search_calls) == 1
 
@@ -238,18 +238,28 @@ def test_artist_config_validation() -> None:
     artists = manager.config.artists
 
     assert {artist.artist_key for artist in artists} == {
+        "lana",
         "nina",
         "hoss",
-        "lana",
         "sliva",
         "sandra",
+        "mila",
     }
     assert all(artist.display_name for artist in artists)
     assert all(artist.specialties for artist in artists)
     assert all(artist.profile_summary for artist in artists)
+    assert all(artist.portfolio_handles for artist in artists)
+    assert {artist.display_name for artist in artists} == {
+        "Lana",
+        "Nina",
+        "Hossam",
+        "Sliva",
+        "Sandra",
+        "Mila",
+    }
     assert manager.validate_artist_assignment(
         "hoss",
-        ["traditional"],
+        ["watercolor"],
     )
     assert not manager.validate_artist_assignment(
         "hoss",
@@ -266,6 +276,38 @@ def test_artist_config_validation() -> None:
 
     assert result.suggested_artist == "Unclear"
     assert "no active artist assignments" in result.ai_reasoning.casefold()
+
+
+@pytest.mark.parametrize(
+    ("style", "expected_artist"),
+    [
+        ("botanical", "Lana"),
+        ("fine-illustrative", "Nina"),
+        ("watercolor", "Hossam"),
+        ("pixel-art", "Sliva"),
+        ("blackwork", "Sandra"),
+        ("new-school", "Mila"),
+    ],
+)
+def test_updated_portfolio_styles_route_to_the_right_artist(
+    style: StyleTag,
+    expected_artist: str,
+) -> None:
+    """Distinctive updated portfolio styles select their specialist."""
+    draft = TattooExtractionDraft(
+        tattoo_idea=f"A {style} design",
+        style_tags=[style],
+        placement="forearm",
+        size_estimate_cm="10 cm",
+        color_preference="color",
+        missing_information=["appointment type"],
+    )
+
+    result = TattooRouter(
+        llm=cast(ChatOpenAI, FailingLLM()),
+    ).route(extracted=draft)
+
+    assert result.suggested_artist == expected_artist
 
 
 def test_routing_rules_engine() -> None:
@@ -328,13 +370,24 @@ def test_artist_expansion() -> None:
             is_active=True,
         )
     )
-    records = _history_records(["marcus"] * 6 + ["hoss"] * 4)
+    records = _history_records(
+        ["marcus"] * 6 + ["hoss"] * 4,
+        style="traditional",
+    )
     matches = [(0.99, record) for record in records]
 
+    draft = TattooExtractionDraft(
+        tattoo_idea="Traditional eagle tattoo",
+        style_tags=["traditional"],
+        placement="upper arm",
+        size_estimate_cm="15cm",
+        color_preference="color",
+        missing_information=[],
+    )
     result = _router(
         FakeVectorStore(records=records, matches=matches),
         artist_config=manager,
-    ).route(extracted=_draft())
+    ).route(extracted=draft)
 
     assert manager.validate_artist_assignment("marcus") is True
     assert result.suggested_artist == "Marcus"
