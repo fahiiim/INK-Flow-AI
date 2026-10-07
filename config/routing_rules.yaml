@@ -1,5 +1,35 @@
 config_version: 1
 rules:
+  - name: Pixel-art specialist
+    condition: "style_tags contains 'pixel-art'"
+    action: "suggest_artist: sliva"
+    priority: 140
+
+  - name: New-school specialist
+    condition: "style_tags contains 'new-school'"
+    action: "suggest_artist: mila"
+    priority: 140
+
+  - name: Neo-traditional specialist
+    condition: "style_tags contains 'neo-traditional'"
+    action: "suggest_artist: mila"
+    priority: 130
+
+  - name: Blackwork specialist
+    condition: "style_tags contains 'blackwork'"
+    action: "suggest_artist: sandra"
+    priority: 130
+
+  - name: Botanical specialist
+    condition: "style_tags contains 'botanical'"
+    action: "suggest_artist: lana"
+    priority: 120
+
+  - name: Fine illustrative specialist
+    condition: "style_tags contains 'fine-illustrative'"
+    action: "suggest_artist: nina"
+    priority: 120
+
   - name: Fine-line preference
     condition: "style_tags contains 'fine-line' AND size < 10cm"
     action: "suggest_artist: lana"
@@ -10,12 +40,22 @@ rules:
     action: "suggest_artist: hoss"
     priority: 110
 
+  - name: Geometric abstract specialist
+    condition: "style_tags contains 'geometric'"
+    action: "suggest_artist: hoss"
+    priority: 105
+
   - name: Calligraphy specialist
     condition: "style_tags contains 'calligraphy'"
     action: "suggest_artist: sliva"
-    priority: 80
+    priority: 120
 
   - name: Small floral work
     condition: "style_tags contains 'floral' AND size < 12cm"
     action: "suggest_artist: lana"
     priority: 70
+
+  - name: General floral work
+    condition: "style_tags contains 'floral'"
+    action: "suggest_artist: lana"
+    priority: 60
