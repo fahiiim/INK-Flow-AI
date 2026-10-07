@@ -1,73 +1,117 @@
-config_version: 1
+config_version: 2
 artists:
-  - artist_key: nina
-    display_name: Nina
-    specialties:
-      - fine-line
-      - geometric
-    profile_summary: >-
-      Nina is an architect and interior designer with a master's degree in
-      Interior Design Science from Politecnica Design University in Milan.
-      Her tattoo work focuses on identity, meaningful personal narratives,
-      self-expression, and creating a thoughtful, transformative experience.
-    min_size_cm: 2.0
-    max_size_cm: 15.0
-    is_active: true
-
-  - artist_key: hoss
-    display_name: Hoss
-    specialties:
-      - watercolor
-      - traditional
-      - black-and-grey
-    profile_summary: >-
-      Hoss has tattooed professionally since 2005 and accepts traditional,
-      black-and-grey, and watercolor projects. His signature work blends
-      surreal graphic imagery, geometry, and watercolor. He works closely
-      with clients to translate personal stories and meaningful intentions
-      into custom tattoos, and he welcomes first-time clients.
-    min_size_cm: 8.0
-    max_size_cm: null
-    is_active: true
-
   - artist_key: lana
     display_name: Lana
     specialties:
       - fine-line
+      - botanical
+      - floral
+      - illustrative
+      - minimal
+    profile_summary: >-
+      Lana creates delicate illustrative and botanical tattoos with fine lines,
+      gentle shading, and an airy use of space. Her softly outlined petals,
+      slender stems, and carefully drawn leaves flow naturally with the body.
+      Her work suits both small flower branches and larger, graceful floral
+      arrangements.
+    portfolio_handles:
+      - "@lankaink"
+    min_size_cm: null
+    max_size_cm: null
+    is_active: true
+
+  - artist_key: nina
+    display_name: Nina
+    specialties:
+      - fine-line
+      - illustrative
+      - fine-illustrative
+      - abstract
       - floral
     profile_summary: >-
-      Lana specializes in delicate fine-line and botanical tattoos in both
-      black and color. She often works freehand so designs flow naturally
-      with the body, drawing on emotions, memories, nature, and personal
-      stories.
-    min_size_cm: 3.0
-    max_size_cm: 18.0
+      Nina combines fine illustrative detail, soft shading, and fluid abstract
+      forms. She works with recognisable subjects such as birds and flowers,
+      as well as translucent, X-ray-like florals with layered shadows. Her
+      compositions can include carefully placed colour and graphic accents,
+      creating depth, movement, and a dreamlike atmosphere.
+    portfolio_handles:
+      - "@ink.by.nina"
+    min_size_cm: null
+    max_size_cm: null
+    is_active: true
+
+  - artist_key: hoss
+    display_name: Hossam
+    specialties:
+      - abstract
+      - geometric
+      - watercolor
+      - illustrative
+    profile_summary: >-
+      Hossam combines geometric structure with expressive abstraction. His
+      graphic work uses angular lines, repeating patterns, sketch-like
+      textures, bold black marks, and illustrative subjects. His watercolour
+      work adds transparent washes, vivid splashes, loose brush-like marks,
+      fine drawing, and strong black accents.
+    portfolio_handles:
+      - "@hossam.tattoos"
+      - "@watercolor.hoss"
+    min_size_cm: null
+    max_size_cm: null
     is_active: true
 
   - artist_key: sliva
-    display_name: Silva
+    display_name: Sliva
     specialties:
+      - pixel-art
+      - realism
+      - fine-line
       - calligraphy
-      - geometric
-      - black-and-grey
     profile_summary: >-
-      Silva combines clean pixel geometry with vibrant color, natural forms,
-      video-game aesthetics, glitch effects, and a touch of psychedelia. He
-      takes an empathetic, easygoing approach and adapts each design through
-      his own precise, playful visual style.
-    min_size_cm: 4.0
-    max_size_cm: 25.0
+      Sliva brings digital-art language onto skin through pixel tattoos,
+      stepped outlines, and blocks of colour. Her work can blend pixel art
+      with smooth colour realism in one subject, creating transitions between
+      digital and realistic forms. She also creates fine-line tattoos and
+      delicate lettering.
+    portfolio_handles:
+      - "@slivkatattoo"
+    min_size_cm: null
+    max_size_cm: null
     is_active: true
 
   - artist_key: sandra
     display_name: Sandra
     specialties:
+      - abstract
+      - blackwork
       - black-and-grey
+      - illustrative
     profile_summary: >-
-      Sandra is a Latvian artist based in Amsterdam with a background in
-      traditional art and leather design. Her tattoos are abstract, dark,
-      expressive, and created exclusively in black ink, with clean, bold
-      compositions designed to flow naturally with the body.
-    min_size_cm: 2.0
-    max_size_cm: 20.0
+      Sandra works in black ink, creating abstract and dark illustrative
+      compositions built around movement, texture, and contrast. Her work
+      ranges from bold, flowing, marbled blackwork to slender organic lines
+      and rough expressive imagery. Each composition follows the body's
+      contours and balances dense black areas with open skin and stippling.
+    portfolio_handles:
+      - "@sandraivdra_design"
+    min_size_cm: null
+    max_size_cm: null
+    is_active: true
+
+  - artist_key: mila
+    display_name: Mila
+    specialties:
+      - new-school
+      - illustrative
+      - neo-traditional
+    profile_summary: >-
+      Mila creates vivid illustrative colour tattoos with expressive subjects,
+      strong outlines, and dimensional shading. Her work combines playful,
+      exaggerated new-school character design with neo-traditional structure,
+      decorative composition, and classic imagery. Her style suits colourful
+      tattoos with personality and strong visual impact.
+    portfolio_handles:
+      - "@kabanova.tattoo"
+    min_size_cm: null
+    max_size_cm: null
     is_active: true
