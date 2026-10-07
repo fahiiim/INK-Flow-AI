@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -22,6 +24,17 @@ class FailingLLM:
     def invoke(self, messages: object) -> object:
         """Simulate an unavailable provider."""
         raise RuntimeError("Simulated provider failure")
+
+
+class StaticExtractionLLM:
+    """Return one deterministic extraction payload."""
+
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    def invoke(self, messages: object) -> SimpleNamespace:
+        """Return the configured extraction as model JSON."""
+        return SimpleNamespace(content=json.dumps(self._payload))
 
 
 def _extractor() -> TattooTextExtractor:
@@ -180,6 +193,91 @@ def test_full_chest_reference_request_resolves_concept_and_size() -> None:
     assert "reference images" not in result.missing_information
 
 
+def test_reference_image_gets_client_confirmable_size_suggestion() -> None:
+    """A reference and placement produce guidance without artist deferral."""
+    message = "I want this rose tattoo on my hand. I've attached the image."
+    result = _extractor().extract(
+        current_message=message,
+        style_tags=["fine-line"],
+        new_image_urls=["https://example.com/rose.jpg"],
+        existing_db_state={"lead": {"name": "Fahim Sarker"}},
+    )
+
+    assert result.size_estimate_cm == "10-15 cm"
+    assert result.size_description == "hand-sized"
+    assert result.size_status == "approximate"
+    assert "size in cm" not in result.missing_information
+    assert "reference-informed planning estimate" in result.complexity_notes
+
+    routed = TattooRouter(
+        llm=cast(ChatOpenAI, FailingLLM()),
+    ).route(
+        extracted=result,
+        current_message=message,
+        existing_db_state={"lead": {"name": "Fahim Sarker"}},
+        message_source="outlook",
+    )
+
+    assert "Based on your reference image" in routed.draft_reply
+    assert "around 10 to 15 cm" in routed.draft_reply
+    assert "confirm the size" not in routed.draft_reply.casefold()
+    assert "recommend suitable dimensions" not in routed.draft_reply.casefold()
+
+
+def test_visual_design_can_refine_size_within_placement_limits() -> None:
+    """A grounded visual recommendation may narrow the placement range."""
+    llm = StaticExtractionLLM(
+        {
+            "client_name": "Fahim Sarker",
+            "tattoo_idea": "Detailed rose",
+            "placement": "wrist",
+            "size_estimate_cm": "6-8 cm",
+            "color_preference": "black-and-grey",
+        }
+    )
+    extractor = TattooTextExtractor(llm=cast(ChatOpenAI, llm))
+    result = extractor.extract(
+        current_message=(
+            "I want this detailed rose on my wrist. The reference image is "
+            "attached."
+        ),
+        style_tags=["micro-realism"],
+        visual_description="A detailed rose with fine internal shading.",
+        new_image_urls=["https://example.com/detailed-rose.jpg"],
+        existing_db_state={"lead": {"name": "Fahim Sarker"}},
+    )
+
+    assert result.size_estimate_cm == "6-8 cm"
+    assert result.size_description == "wrist-sized"
+    assert result.size_status == "approximate"
+
+
+def test_no_reference_image_asks_client_for_size_directly() -> None:
+    """Placement alone must not manufacture a size recommendation."""
+    message = "I want a fine-line rose tattoo on my hand."
+    result = _extractor().extract(
+        current_message=message,
+        style_tags=["fine-line"],
+        existing_db_state={"lead": {"name": "Fahim Sarker"}},
+    )
+
+    assert result.size_estimate_cm == ""
+    assert result.size_description == ""
+    assert "size in cm" in result.missing_information
+
+    routed = TattooRouter(
+        llm=cast(ChatOpenAI, FailingLLM()),
+    ).route(
+        extracted=result,
+        current_message=message,
+        existing_db_state={"lead": {"name": "Fahim Sarker"}},
+        message_source="outlook",
+    )
+
+    assert "What size would you prefer in centimetres?" in routed.draft_reply
+    assert "artist can recommend" not in routed.draft_reply.casefold()
+
+
 def test_explicit_eagle_idea_drops_fillers_and_corrects_obvious_typo() -> None:
     """Conversational filler and an obvious feather typo stay out of state."""
     result = _extractor().extract(
@@ -274,6 +372,7 @@ def test_unknown_size_uses_body_placement_planning_range(
     result = _extractor().extract(
         current_message=message,
         style_tags=["unknown"],
+        new_image_urls=["https://example.com/reference.jpg"],
         existing_db_state={"lead": {"name": "Fahim Sarker"}},
     )
 
@@ -289,6 +388,7 @@ def test_unlisted_body_placement_receives_safe_fallback_range() -> None:
     result = _extractor().extract(
         current_message="I don't know the exact size.",
         style_tags=["unknown"],
+        new_image_urls=["https://example.com/reference.jpg"],
         existing_db_state={
             "lead": {"name": "Fahim Sarker"},
             "intake": {"placement": "Achilles tendon"},
