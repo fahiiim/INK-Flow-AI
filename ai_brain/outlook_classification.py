@@ -61,8 +61,9 @@ _REQUEST_INTENT_PATTERN = re.compile(
 )
 _STYLE_PATTERN = re.compile(
     r"\b(?:fine[- ]?line|watercolou?r|minimal(?:ist)?|micro[- ]?realism|"
-    r"calligraph(?:y|ic)|traditional|geometric|black[- ]and[- ]gr[ae]y|"
-    r"black\s+and\s+gr[ae]y)\b",
+    r"botanical|illustrative|abstract|black\s*work|realism|pixel[- ]?art|"
+    r"new[- ]?school|neo[- ]?traditional|calligraph(?:y|ic)|traditional|"
+    r"geometric|black[- ]and[- ]gr[ae]y|black\s+and\s+gr[ae]y)\b",
     flags=re.IGNORECASE,
 )
 _PLACEMENT_PATTERN = re.compile(
@@ -81,7 +82,7 @@ _STUDIO_PATTERN = re.compile(
     r"\b(?:tattoo\s+hysteria|tattoo\s+studio|studio\s+visit|"
     r"visit\s+(?:to\s+)?(?:the|your)\s+studio|(?:the|your)\s+studio|"
     r"tattoo\s+artist|"
-    r"hoss|nina|lana|sandra|silva|sliva)\b",
+    r"hoss|hossam|nina|lana|sandra|silva|sliva|mila)\b",
     flags=re.IGNORECASE,
 )
 _MEASUREMENT_PATTERN = re.compile(
