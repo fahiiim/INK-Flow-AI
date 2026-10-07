@@ -49,6 +49,11 @@ _STYLE_TAGS_THAT_RESOLVE_PREFERENCE = _STYLE_TAG_SET - {
     "floral",
     "black-and-grey",
 }
+_SPECIFIC_STYLE_PARENTS: dict[str, str] = {
+    "fine-illustrative": "illustrative",
+    "micro-realism": "realism",
+    "neo-traditional": "traditional",
+}
 _MISSING_SET = set(MISSING_INFORMATION_OPTIONS)
 _PRICING_PATTERN = re.compile(
     r"\b(?:price|pricing|cost|quote|how much|budget)\b",
@@ -281,7 +286,22 @@ _STYLE_TEXT_ALIASES: dict[StyleTag, tuple[str, ...]] = {
     "watercolor": ("watercolor", "watercolour"),
     "minimal": ("minimal", "minimalist"),
     "floral": ("floral",),
+    "botanical": ("botanical",),
+    "illustrative": ("illustrative", "illustration"),
+    "fine-illustrative": (
+        "fine illustrative",
+        "transparent floral",
+        "translucent floral",
+        "x-ray floral",
+        "x ray floral",
+    ),
+    "abstract": ("abstract",),
+    "blackwork": ("blackwork", "black work"),
+    "realism": ("realism", "realistic"),
     "micro-realism": ("micro-realism", "micro realism"),
+    "pixel-art": ("pixel-art", "pixel art", "pixel tattoo"),
+    "new-school": ("new-school", "new school"),
+    "neo-traditional": ("neo-traditional", "neo traditional"),
     "calligraphy": ("calligraphy", "calligraphic", "lettering"),
     "traditional": ("traditional",),
     "geometric": ("geometric", "geometry"),
@@ -831,6 +851,9 @@ class TattooTextExtractor:
             return ["unknown"]
         if "unknown" in cleaned and len(cleaned) > 1:
             cleaned = [tag for tag in cleaned if tag != "unknown"]
+        for specific, parent in _SPECIFIC_STYLE_PARENTS.items():
+            if specific in cleaned and parent in cleaned:
+                cleaned.remove(parent)
 
         return cast(list[StyleTag], cleaned)
 
@@ -2867,15 +2890,17 @@ class TattooTextExtractor:
         return found
 
     def _extract_preferred_artist_from_text(self, text: str) -> str:
-        """Extract one of the five client-selectable artist preferences."""
+        """Extract a canonical artist preference, including legacy aliases."""
         normalized = " ".join(text.casefold().split())
         aliases = {
-            "hoss": "Hoss",
+            "hossam": "Hossam",
+            "hoss": "Hossam",
             "nina": "Nina",
             "lana": "Lana",
             "sandra": "Sandra",
-            "silva": "Silva",
-            "sliva": "Silva",
+            "sliva": "Sliva",
+            "silva": "Sliva",
+            "mila": "Mila",
         }
         matches: list[tuple[int, str]] = []
         no_preference_pattern = re.compile(
