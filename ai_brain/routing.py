@@ -77,6 +77,10 @@ _ARTIST_SIZE_DELEGATION_PATTERN = re.compile(
     r"(?:artist|tattooer)\b",
     flags=re.IGNORECASE,
 )
+_ARTIST_DISPLAY_ALIASES = {
+    "hoss": "hossam",
+    "silva": "sliva",
+}
 
 
 class _RoutingLLMOutput(BaseModel):
@@ -495,10 +499,24 @@ class TattooRouter:
         suggested_artist: SuggestedArtist,
     ) -> str:
         """Return client-safe portfolio context for a suggested artist."""
+        requested_name = self._canonical_artist_name(suggested_artist)
         for artist in self._artist_config.get_active_artists():
-            if artist.display_name.casefold() == suggested_artist.casefold():
-                return artist.profile_summary
+            configured_name = self._canonical_artist_name(
+                artist.display_name
+            )
+            if configured_name == requested_name:
+                if not artist.portfolio_handles:
+                    return artist.profile_summary
+                portfolios = self._natural_list(artist.portfolio_handles)
+                return (
+                    f"{artist.profile_summary} Portfolio: {portfolios}."
+                )
         return ""
+
+    def _canonical_artist_name(self, value: str) -> str:
+        """Normalize legacy artist display names for compatibility."""
+        normalized = value.strip().casefold()
+        return _ARTIST_DISPLAY_ALIASES.get(normalized, normalized)
 
     def _artist_directory_summary(self) -> str:
         """Return a concise client-safe directory from configured profiles."""
@@ -603,7 +621,8 @@ class TattooRouter:
             (
                 artist
                 for artist in self._artist_config.get_active_artists()
-                if artist.display_name.casefold() == preferred.casefold()
+                if self._canonical_artist_name(artist.display_name)
+                == self._canonical_artist_name(preferred)
             ),
             None,
         )
