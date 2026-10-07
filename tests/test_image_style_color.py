@@ -75,6 +75,50 @@ def test_vision_parser_returns_approved_style_and_color() -> None:
     assert output.visual_description == "A rose surrounded by leaves."
 
 
+def test_vision_parser_accepts_updated_portfolio_styles() -> None:
+    """Vision keeps the new artist-specific style vocabulary."""
+    analyzer = TattooVisionAnalyzer(
+        llm=cast(ChatOpenAI, BlankExtractionLLM()),
+    )
+    output = analyzer._parse_vision_output(
+        json.dumps(
+            {
+                "style_tags": [
+                    "fine-illustrative",
+                    "pixel-art",
+                    "new-school",
+                ],
+                "color_preference": "color",
+                "design_subjects": ["floral character"],
+                "visual_description": "A colourful illustrated flower.",
+            }
+        )
+    )
+
+    assert output.style_tags == [
+        "fine-illustrative",
+        "pixel-art",
+        "new-school",
+    ]
+
+
+def test_transparent_floral_wording_maps_to_nina_style_vocabulary() -> None:
+    """Client language for Nina's visual style is extracted deterministically."""
+    extractor = TattooTextExtractor(
+        llm=cast(ChatOpenAI, FailingExtractionLLM()),
+    )
+    result = extractor.extract(
+        current_message=(
+            "I want transparent floral work with fine illustrative detail."
+        ),
+        style_tags=["unknown"],
+        existing_db_state={"lead": {"name": "Fahim Sarker"}},
+    )
+
+    assert "fine-illustrative" in result.style_tags
+    assert "tattoo style" not in result.missing_information
+
+
 def test_recognized_image_removes_style_color_and_reference_missing() -> None:
     """Known visual evidence is retained and prepared for confirmation."""
     result = _extractor().extract(
