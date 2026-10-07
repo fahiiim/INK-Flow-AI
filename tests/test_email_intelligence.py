@@ -492,6 +492,6 @@ def test_artist_roster_question_is_answered_and_projects_are_not_public() -> Non
     assert extracted.client_intent == "artist_guidance"
     assert extracted.tattoo_idea == stored_intake["tattoo_idea"]
     assert "minimal like:" not in result.draft_reply.casefold()
-    for artist in ("Hoss", "Nina", "Lana", "Sandra", "Silva"):
+    for artist in ("Lana", "Nina", "Hossam", "Sliva", "Sandra", "Mila"):
         assert artist in result.draft_reply
     assert "projects" not in result.model_dump(mode="json")
