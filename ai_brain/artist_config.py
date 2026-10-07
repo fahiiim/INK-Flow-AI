@@ -57,6 +57,11 @@ class ArtistProfile(BaseModel):
             "artist questions."
         ),
     )
+    portfolio_handles: list[str] = Field(
+        default_factory=list,
+        max_length=5,
+        description="Verified social handles for the artist's portfolios.",
+    )
     min_size_cm: float | None = Field(default=None, ge=0)
     max_size_cm: float | None = Field(default=None, ge=0)
     is_active: bool = True
@@ -81,6 +86,20 @@ class ArtistProfile(BaseModel):
         if len(value) != len(set(value)):
             raise ValueError("Artist specialties must be unique.")
         return value
+
+    @field_validator("portfolio_handles")
+    @classmethod
+    def validate_portfolio_handles(cls, value: list[str]) -> list[str]:
+        """Normalize and validate unique public portfolio handles."""
+        normalized = [
+            handle if handle.startswith("@") else f"@{handle}"
+            for handle in value
+        ]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("Portfolio handles must be unique.")
+        if any(len(handle) < 2 or " " in handle for handle in normalized):
+            raise ValueError("Portfolio handles must be valid @names.")
+        return normalized
 
     @model_validator(mode="after")
     def validate_size_range(self) -> Self:
