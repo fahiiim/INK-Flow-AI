@@ -112,13 +112,14 @@ def test_group_watercolor_request_keeps_separate_person_details() -> None:
     assert routed.risk_level == "low"
     assert routed.multi_entity_detected is True
     assert routed.complexity_notes == second.complexity_notes
-    assert routed.suggested_artist == "Hoss"
+    assert routed.suggested_artist == "Hossam"
     assert routed.staff_review_required is False
     assert routed.telegram_review_required is False
     assert routed.intake_status == "collecting_info"
     assert routed.review_reasons == []
-    assert "recommend Hoss" in routed.draft_reply
-    assert "tattooed professionally since 2005" in routed.draft_reply
+    assert "recommend Hossam" in routed.draft_reply
+    assert "geometric structure" in routed.draft_reply
+    assert "@watercolor.hoss" in routed.draft_reply
     assert "custom estimate" in routed.draft_reply
     assert "recorded the following" not in routed.draft_reply.casefold()
     assert "separate tattoo details together" not in routed.draft_reply
@@ -467,8 +468,8 @@ def test_full_artist_and_scheduling_thread_preserves_every_answer() -> None:
     assert recommendation.preferred_artist == ""
     assert recommendation.artist_preference_mode == "recommend"
     assert "preferred artist" in recommendation.missing_information
-    assert "recommend Hoss" in recommendation.draft_reply
-    assert "tattooed professionally since 2005" in (
+    assert "recommend Hossam" in recommendation.draft_reply
+    assert "geometric structure" in (
         recommendation.draft_reply
     )
     assert "not sure" not in recommendation.draft_reply
@@ -481,7 +482,7 @@ def test_full_artist_and_scheduling_thread_preserves_every_answer() -> None:
     repeated_artist_question = process(
         "I don't know them personally; who would be the best for me?"
     )
-    assert "Hoss remains my recommendation" in (
+    assert "Hossam remains my recommendation" in (
         repeated_artist_question.draft_reply
     )
 
@@ -496,7 +497,7 @@ def test_full_artist_and_scheduling_thread_preserves_every_answer() -> None:
     artist_and_time = process(
         "I prefer 4:00. Hoss is my preferred artist."
     )
-    assert artist_and_time.preferred_artist == "Hoss"
+    assert artist_and_time.preferred_artist == "Hossam"
     assert artist_and_time.artist_preference_mode == "specific"
 
     schedule = process("28th Sept 9:00 AM")
@@ -512,7 +513,7 @@ def test_full_artist_and_scheduling_thread_preserves_every_answer() -> None:
     assert schedule.availability == f"{expected_date} at 09:00"
     assert schedule.missing_information == ["tattoo project type"]
     assert "To confirm what I have so far" in schedule.draft_reply
-    assert "preferred artist: Hoss" in schedule.draft_reply
+    assert "preferred artist: Hossam" in schedule.draft_reply
     assert f"28 September {expected_year} at 09:00" in schedule.draft_reply
     assert "One last detail" in schedule.draft_reply
 
@@ -549,6 +550,6 @@ def test_specific_artist_question_uses_configured_portfolio() -> None:
         message_source="outlook",
     )
 
-    assert "master's degree" in routed.draft_reply
-    assert "Politecnica Design University" in routed.draft_reply
-    assert "Milan" in routed.draft_reply
+    assert "fine illustrative detail" in routed.draft_reply
+    assert "X-ray-like florals" in routed.draft_reply
+    assert "@ink.by.nina" in routed.draft_reply
