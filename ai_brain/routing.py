@@ -69,6 +69,14 @@ _DRAFT_QUESTION_MARKERS: dict[str, tuple[str, ...]] = {
         "new tattoo or",
     ),
 }
+_ARTIST_SIZE_DELEGATION_PATTERN = re.compile(
+    r"\b(?:artist|tattooer)\b.{0,55}\b(?:choose|decide|recommend|suggest|"
+    r"confirm|advise)\b.{0,30}\b(?:size|dimensions?|measurement)\b|"
+    r"\b(?:size|dimensions?|measurement)\b.{0,55}\b(?:chosen|decided|"
+    r"recommended|suggested|confirmed|advised)\b.{0,20}\bby\s+(?:the\s+)?"
+    r"(?:artist|tattooer)\b",
+    flags=re.IGNORECASE,
+)
 
 
 class _RoutingLLMOutput(BaseModel):
@@ -389,6 +397,8 @@ class TattooRouter:
             )
         ):
             raise ValueError("Draft reply exposes invalid or robotic wording.")
+        if _ARTIST_SIZE_DELEGATION_PATTERN.search(reply):
+            raise ValueError("Draft reply delegates size selection to an artist.")
         if extracted.conversation_status == "closed" and "?" in reply:
             raise ValueError("Closed inquiries cannot contain questions.")
         if self._is_artist_roster_question(current_message):
