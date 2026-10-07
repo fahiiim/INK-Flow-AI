@@ -417,6 +417,14 @@ class TattooRouter:
                     + ", ".join(missing_artists)
                 )
         if (
+            extracted.missing_information
+            and extracted.conversation_status != "closed"
+            and "?" not in reply
+        ):
+            raise ValueError(
+                "Draft reply omits a question while intake details are missing."
+            )
+        if (
             not extracted.missing_information
             and not self._mentions_confirmed_intake_detail(reply, extracted)
         ):

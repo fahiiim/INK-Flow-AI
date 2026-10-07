@@ -2891,7 +2891,7 @@ class TattooTextExtractor:
 
     def _extract_preferred_artist_from_text(self, text: str) -> str:
         """Extract a canonical artist preference, including legacy aliases."""
-        normalized = " ".join(text.casefold().split())
+        normalized = " ".join(text.casefold().replace("’", "'").split())
         aliases = {
             "hossam": "Hossam",
             "hoss": "Hossam",
@@ -2915,6 +2915,15 @@ class TattooTextExtractor:
                 rf"\b(?:prefer|preferred|choose|chose|select|selected)\s+"
                 rf"(?:artist\s+)?{escaped}\b",
                 rf"\b(?:go|going)\s+with\s+{escaped}\b",
+                rf"\b(?:move|moving|go|going)\s+(?:forward|ahead)\s+with\s+"
+                rf"{escaped}\b",
+                rf"\b(?:proceed|proceeding|continue|continuing|stick|sticking|"
+                rf"work|working)\s+with\s+{escaped}\b",
+                rf"\b(?:request|requesting|pick|picking|take|taking)\s+"
+                rf"{escaped}\b",
+                rf"\b(?:i'd|i\s+would)\s+like\s+(?:to\s+book\s+(?:with\s+)?)?"
+                rf"{escaped}\b",
+                rf"\b{escaped}\s+(?:it\s+is|sounds\s+(?:good|great|perfect))\b",
                 rf"\b(?:want|book)\s+(?:with\s+)?{escaped}\b",
                 rf"\b{escaped}\b.{{0,25}}\b(?:is|as)\s+my\s+"
                 rf"(?:preferred\s+)?artist\b",
