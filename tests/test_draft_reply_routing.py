@@ -278,8 +278,8 @@ def test_valid_natural_outlook_model_reply_is_used() -> None:
     """A grounded professional model draft replaces the stock fallback."""
     natural_reply = (
         "Dear Maruf,\n\nMultiple stars on the neck can work beautifully. "
-        "Since you are unsure about size, the artist can recommend suitable "
-        "dimensions after reviewing the reference. Would you like the stars "
+        "Based on your reference image and neck placement, I'd suggest "
+        "around 5 to 15 cm. Does that sound right? Would you like the stars "
         "in colour or black and grey?\n\nKind regards,\nTattoo Hysteria"
     )
     fake_llm = SequentialLLM(
@@ -293,9 +293,13 @@ def test_valid_natural_outlook_model_reply_is_used() -> None:
         tattoo_idea="Multiple stars",
         style_tags=["unknown"],
         placement="neck",
-        size_estimate_cm="",
-        size_description="not sure",
-        size_status="unknown",
+        size_estimate_cm="5-15 cm",
+        size_description="neck-sized",
+        size_status="approximate",
+        complexity_notes=(
+            "Size guidance: reference-informed planning estimate; client "
+            "confirmation is required."
+        ),
         color_preference="",
         client_intent="size_guidance",
         missing_information=["color preference"],
@@ -313,6 +317,50 @@ def test_valid_natural_outlook_model_reply_is_used() -> None:
 
     assert result.draft_reply == natural_reply
     assert len(fake_llm.calls) == 2
+
+
+def test_artist_size_delegation_uses_safe_fallback() -> None:
+    """A model draft cannot hand size selection back to an artist."""
+    unsafe_reply = (
+        "Dear Maruf,\n\nThe artist can recommend suitable dimensions after "
+        "reviewing your reference image. Would you like colour or black and "
+        "grey?\n\nKind regards,\nTattoo Hysteria"
+    )
+    fake_llm = SequentialLLM(
+        [
+            _reasoning_response(),
+            json.dumps({"draft_reply": unsafe_reply}),
+        ]
+    )
+    extracted = TattooExtractionDraft(
+        client_name="Maruf Hossain",
+        tattoo_idea="Multiple stars",
+        style_tags=["unknown"],
+        placement="neck",
+        size_estimate_cm="5-15 cm",
+        size_description="neck-sized",
+        size_status="approximate",
+        complexity_notes=(
+            "Size guidance: reference-informed planning estimate; client "
+            "confirmation is required."
+        ),
+        color_preference="",
+        missing_information=["color preference"],
+    )
+
+    result = TattooRouter(
+        llm=cast(ChatOpenAI, fake_llm),
+        vector_store=_warm_vector_store(),
+    ).route(
+        extracted=extracted,
+        current_message="I do not know the size. Can you suggest it?",
+        existing_db_state={"lead": {"name": "Maruf Hossain"}},
+        message_source="outlook",
+    )
+
+    assert result.draft_reply != unsafe_reply
+    assert "Based on your reference image" in result.draft_reply
+    assert "artist can recommend" not in result.draft_reply.casefold()
 
 
 def test_generic_completed_outlook_reply_uses_detailed_fallback() -> None:
