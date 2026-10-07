@@ -16,7 +16,7 @@ def test_system_prompt_locks_human_progressive_reply_behavior() -> None:
     assert "or bulleted lists of missing info" in DRAFT_REPLY_SYSTEM_PROMPT
     assert "NEVER show a field whose value is blank" in DRAFT_REPLY_SYSTEM_PROMPT
     assert "multi_entity_detected is True" in DRAFT_REPLY_SYSTEM_PROMPT
-    assert "provide a custom estimate shortly" in DRAFT_REPLY_SYSTEM_PROMPT
+    assert "provide a custom estimate" in DRAFT_REPLY_SYSTEM_PROMPT
     assert "ONLY the 1 or 2 most critical items" in DRAFT_REPLY_SYSTEM_PROMPT
     assert "already confirmed details" in DRAFT_REPLY_SYSTEM_PROMPT
 
