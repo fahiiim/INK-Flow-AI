@@ -94,6 +94,10 @@ _COMPLEX_ROUTING_NOTE = "Complex routing required"
 _REFERENCE_LED_STYLE_NOTE = (
     "Style preference: reference-led design; no named style was inferred."
 )
+_REFERENCE_SIZE_NOTE = (
+    "Size guidance: reference-informed planning estimate; client confirmation "
+    "is required."
+)
 _DEFAULT_PLACEMENT_SIZE_RANGE = "5-20 cm"
 _PLACEMENT_SIZE_RANGES: dict[str, str] = {
     "scalp": "5-20 cm",
@@ -684,6 +688,14 @@ class TattooTextExtractor:
                 existing_db_state=safe_db_state,
                 style_tags=normalized_tags,
             )
+            resolved_output = self._apply_reference_size_guidance(
+                output=resolved_output,
+                current_message=normalized_message,
+                recent_chat_history=safe_chat_history,
+                new_image_urls=safe_image_urls,
+                existing_db_state=safe_db_state,
+                visual_description=visual_description,
+            )
             if self._is_missing_tattoo_idea(resolved_output.tattoo_idea):
                 visual_idea = self._visual_subject_idea(safe_visual_subjects)
                 if visual_idea:
@@ -746,6 +758,7 @@ class TattooTextExtractor:
                 style_tags=normalized_tags,
                 visual_color_preference=visual_color_preference,
                 visual_subjects=safe_visual_subjects,
+                visual_description=visual_description,
                 new_image_urls=safe_image_urls,
                 existing_db_state=safe_db_state,
                 recent_chat_history=safe_chat_history,
@@ -870,6 +883,131 @@ class TattooTextExtractor:
             )
         return output.model_copy(update={"complexity_notes": notes})
 
+    def _apply_reference_size_guidance(
+        self,
+        output: _ExtractionSubset,
+        current_message: str,
+        recent_chat_history: list[Message],
+        new_image_urls: list[str],
+        existing_db_state: dict[str, Any],
+        visual_description: str,
+    ) -> _ExtractionSubset:
+        """Suggest a conservative size when image and placement support it.
+
+        A reference image has no reliable physical scale by itself. The
+        recommendation therefore combines the visual reference with the
+        requested body placement and remains subject to client confirmation.
+        """
+        has_reference = bool(new_image_urls) or self._has_reference_images(
+            existing_db_state
+        )
+        if not has_reference or self._is_blank(output.placement):
+            return output
+        if self._has_client_supplied_size(
+            current_message=current_message,
+            recent_chat_history=recent_chat_history,
+            existing_db_state=existing_db_state,
+        ):
+            return output
+
+        description = self._placement_size_description(output.placement)
+        estimate = self._infer_size(
+            size_estimate_cm="",
+            size_description=description,
+        )
+        if visual_description.strip():
+            estimate = self._validated_visual_size_estimate(
+                proposed_estimate=output.size_estimate_cm,
+                placement_range=estimate,
+            ) or estimate
+        if not estimate:
+            return output
+
+        notes = " ".join(output.complexity_notes.split())
+        if _REFERENCE_SIZE_NOTE.casefold() not in notes.casefold():
+            notes = " ".join(
+                part for part in (notes, _REFERENCE_SIZE_NOTE) if part
+            )
+        return output.model_copy(
+            update={
+                "size_estimate_cm": estimate,
+                "size_description": description,
+                "complexity_notes": notes,
+            }
+        )
+
+    def _has_client_supplied_size(
+        self,
+        current_message: str,
+        recent_chat_history: list[Message],
+        existing_db_state: dict[str, Any],
+    ) -> bool:
+        """Return whether the client or persisted intake supplied a size."""
+        current_size = self._extract_size_from_text(current_message)
+        if current_size:
+            return True
+        current_description = self._extract_size_description(current_message)
+        if current_description == "not sure":
+            return False
+        if current_description:
+            return True
+
+        user_texts = [
+            message.content
+            for message in recent_chat_history
+            if message.role == "user"
+        ]
+        for text in user_texts:
+            if self._extract_size_from_text(text):
+                return True
+            description = self._extract_size_description(text)
+            if description and description != "not sure":
+                return True
+
+        stored_size = self._get_state_text(
+            existing_db_state,
+            ("size_estimate_cm", "size_cm", "size"),
+        )
+        stored_description = self._get_state_text(
+            existing_db_state,
+            ("size_description", "size_label", "qualitative_size"),
+        )
+        return bool(
+            stored_size
+            or (
+                stored_description
+                and stored_description.casefold() != "not sure"
+            )
+        )
+
+    def _validated_visual_size_estimate(
+        self,
+        proposed_estimate: str,
+        placement_range: str,
+    ) -> str:
+        """Accept a vision-informed model range only within placement limits."""
+        normalized = self._extract_size_from_text(proposed_estimate)
+        proposed_bounds = self._size_bounds(normalized)
+        placement_bounds = self._size_bounds(placement_range)
+        if not proposed_bounds or not placement_bounds:
+            return ""
+        if (
+            proposed_bounds[0] < placement_bounds[0]
+            or proposed_bounds[1] > placement_bounds[1]
+        ):
+            return ""
+        return normalized
+
+    def _size_bounds(self, value: str) -> tuple[Decimal, Decimal] | None:
+        """Return minimum and maximum numeric centimetre values."""
+        values = [
+            Decimal(match)
+            for match in re.findall(r"\d+(?:\.\d+)?", value)
+        ]
+        if not values:
+            return None
+        return min(values), max(values)
+
     def _normalize_visual_subjects(self, subjects: list[str]) -> list[str]:
         """Normalize bounded visual subjects before prompt and state use."""
         normalized: list[str] = []
@@ -981,7 +1119,10 @@ class TattooTextExtractor:
                 llm_output.tattoo_idea
             ),
             "size in cm": self._is_blank(inferred_size)
-            and self._is_blank(llm_output.size_description),
+            and (
+                self._is_blank(llm_output.size_description)
+                or llm_output.size_description == "not sure"
+            ),
             "placement": self._is_blank(llm_output.placement),
             "tattoo style": not any(
                 tag in _STYLE_TAGS_THAT_RESOLVE_PREFERENCE
@@ -1024,6 +1165,7 @@ class TattooTextExtractor:
         style_tags: list[StyleTag],
         visual_color_preference: VisualColorPreference,
         visual_subjects: list[str],
+        visual_description: str,
         new_image_urls: list[str],
         existing_db_state: dict[str, Any],
         recent_chat_history: list[Message],
@@ -1075,6 +1217,14 @@ class TattooTextExtractor:
             new_image_urls=new_image_urls,
             existing_db_state=existing_db_state,
             style_tags=style_tags,
+        )
+        resolved_fallback = self._apply_reference_size_guidance(
+            output=resolved_fallback,
+            current_message=current_message,
+            recent_chat_history=recent_chat_history,
+            new_image_urls=new_image_urls,
+            existing_db_state=existing_db_state,
+            visual_description=visual_description,
         )
         missing = self._finalize_missing_information(
             llm_output=resolved_fallback,
@@ -1171,7 +1321,6 @@ class TattooTextExtractor:
         )
         size_description = self._resolve_size_description(
             llm_value=llm_output.size_description,
-            placement=placement,
             current_message=current_message,
             recent_chat_history=recent_chat_history,
             existing_db_state=existing_db_state,
@@ -1630,7 +1779,6 @@ class TattooTextExtractor:
     def _resolve_size_description(
         self,
         llm_value: str,
-        placement: str,
         current_message: str,
         recent_chat_history: list[Message],
         existing_db_state: dict[str, Any],
@@ -1638,10 +1786,6 @@ class TattooTextExtractor:
         """Resolve qualitative or explicitly uncertain size answers."""
         current_value = self._extract_size_description(current_message)
         if current_value:
-            if current_value == "not sure":
-                placement_value = self._placement_size_description(placement)
-                if placement_value:
-                    return placement_value
             return current_value
         if self._extract_size_from_text(current_message):
             return ""
