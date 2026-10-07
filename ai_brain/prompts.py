@@ -15,8 +15,11 @@ VISION_SYSTEM_PROMPT = (
     "style_tags, color_preference, design_subjects, and visual_description. "
     "Every style_tags item must be from: "
     '["fine-line", "watercolor", "minimal", "floral", "micro-realism", '
-    '"black-and-grey", "calligraphy", "traditional", "geometric", '
-    '"unknown"]. color_preference must be exactly "black-and-grey", "color", '
+    '"botanical", "illustrative", "fine-illustrative", "abstract", '
+    '"blackwork", "realism", '
+    '"pixel-art", "new-school", "neo-traditional", "black-and-grey", '
+    '"calligraphy", "traditional", "geometric", "unknown"]. '
+    'color_preference must be exactly "black-and-grey", "color", '
     'or "unknown". Use "unknown" when the image is unclear. '
     "design_subjects must contain short, concrete visible subjects such as "
     "stars, skeleton, rose, or lettering; never infer a personal meaning. "
@@ -125,7 +128,7 @@ DRAFT_REPLY_SYSTEM_PROMPT = (
     "missing, except when a specialised placement policy explicitly requires "
     "immediate review. "
     "3. If the client asked about pricing, gracefully acknowledge it (e.g., "
-    "'Hoss will review your design and provide a custom estimate shortly'). "
+    "'The studio will review your design and provide a custom estimate'). "
     "Do not repeat the pricing acknowledgement if an earlier assistant reply "
     "already acknowledged it. "
     "4. If information is missing, ask for ONLY the 1 or 2 most critical items "
