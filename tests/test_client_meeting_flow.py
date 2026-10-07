@@ -135,8 +135,8 @@ def test_group_watercolor_request_keeps_separate_person_details() -> None:
     assert "2 watercolor tattoos" in whatsapp.draft_reply
 
 
-def test_not_sure_is_a_valid_size_answer_and_triggers_staff_help() -> None:
-    """An uncertain client answer is recorded instead of asked repeatedly."""
+def test_not_sure_without_reference_keeps_size_question_open() -> None:
+    """Without a reference, an uncertain answer still needs client sizing."""
     history = [
         Message(
             role="assistant",
@@ -162,7 +162,7 @@ def test_not_sure_is_a_valid_size_answer_and_triggers_staff_help() -> None:
 
     assert extracted.size_description == "not sure"
     assert extracted.size_estimate_cm == ""
-    assert "size in cm" not in extracted.missing_information
+    assert "size in cm" in extracted.missing_information
 
     routed = TattooRouter(
         llm=cast(ChatOpenAI, FailingLLM()),
@@ -174,7 +174,8 @@ def test_not_sure_is_a_valid_size_answer_and_triggers_staff_help() -> None:
     assert routed.review_reasons == []
     assert routed.staff_review_required is False
     assert routed.telegram_review_required is False
-    assert "What size would you prefer" not in routed.draft_reply
+    assert "reference or inspiration images" in routed.draft_reply
+    assert "artist can recommend" not in routed.draft_reply.casefold()
 
 
 def test_coin_sized_request_gets_an_approximate_range() -> None:
@@ -404,7 +405,7 @@ def test_matching_existing_tattoo_email_gets_a_specific_reply() -> None:
         routed.draft_reply
     )
     assert "match an existing tattoo" in routed.draft_reply
-    assert "10 to 15 cm sound right?" in routed.draft_reply
+    assert "10 to 15 cm sound right?" not in routed.draft_reply
     assert "updated design details" in routed.draft_reply
 
 
