@@ -121,7 +121,7 @@ def test_input_rejects_request_without_text_or_image() -> None:
         ("suggested_artist", ""),
         ("confidence_level", "certain"),
         ("risk_level", "medium"),
-        ("style_tags", ["neo-traditional"]),
+        ("style_tags", ["trash-polka"]),
         ("style_tags", []),
         ("date", "2026-02-30"),
         ("time", "2:30 PM"),
@@ -172,6 +172,23 @@ def test_output_includes_empty_scheduling_fields_when_unknown() -> None:
     assert result.time == ""
 
 
+@pytest.mark.parametrize(
+    ("legacy_name", "canonical_name"),
+    [("Hoss", "Hossam"), ("Silva", "Sliva")],
+)
+def test_output_normalizes_legacy_artist_names(
+    legacy_name: str,
+    canonical_name: str,
+) -> None:
+    """Old database display names remain valid but are returned canonically."""
+    payload = _valid_output_payload()
+    payload["preferred_artist"] = legacy_name
+
+    result = AIExtractionOutput.model_validate(payload)
+
+    assert result.preferred_artist == canonical_name
+
+
 def test_output_serializes_outlook_gate_as_auto_reply() -> None:
     """The backend-facing response uses the requested exact JSON key."""
     payload = _valid_output_payload()
@@ -200,11 +217,12 @@ def test_required_intake_and_choice_options_match_studio_workflow() -> None:
         "tattoo project type",
     )
     assert ARTIST_PREFERENCE_OPTIONS == (
-        "Hoss",
-        "Nina",
         "Lana",
+        "Nina",
+        "Hossam",
+        "Sliva",
         "Sandra",
-        "Silva",
+        "Mila",
     )
 
 
