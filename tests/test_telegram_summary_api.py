@@ -254,7 +254,7 @@ def test_complete_summary_is_short_and_staff_friendly() -> None:
         'Fahim Sarker is requesting a new tattoo: "Calligraphy". '
         "The design uses a calligraphy style, measures approximately 9 cm, "
         "is intended for the chest, and uses color ink. The client provided "
-        "one reference image, prefers Silva, wants a studio visit, and is "
+        "one reference image, prefers Sliva, wants a studio visit, and is "
         "available on 2026-09-12 at 12:00. All intake details are complete. "
         "Artist assignment is pending."
     )
