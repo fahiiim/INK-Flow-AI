@@ -55,6 +55,16 @@ _SPECIFIC_STYLE_PARENTS: dict[str, str] = {
     "neo-traditional": "traditional",
 }
 _MISSING_SET = set(MISSING_INFORMATION_OPTIONS)
+_ARTIST_NAME_ALIASES: dict[str, str] = {
+    "hossam": "Hossam",
+    "hoss": "Hossam",
+    "nina": "Nina",
+    "lana": "Lana",
+    "sandra": "Sandra",
+    "sliva": "Sliva",
+    "silva": "Sliva",
+    "mila": "Mila",
+}
 _PRICING_PATTERN = re.compile(
     r"\b(?:price|pricing|cost|quote|how much|budget)\b",
     flags=re.IGNORECASE,
@@ -1359,6 +1369,7 @@ class TattooTextExtractor:
             current_message=current_message,
             recent_chat_history=recent_chat_history,
             existing_db_state=existing_db_state,
+            llm_value=llm_output.preferred_artist,
         )
         tattoo_project_type = self._resolve_project_type(
             current_message=current_message,
@@ -1557,6 +1568,7 @@ class TattooTextExtractor:
         current_message: str,
         recent_chat_history: list[Message],
         existing_db_state: dict[str, Any],
+        llm_value: str = "",
     ) -> PreferredArtist:
         """Use only an explicit client selection or a persisted preference."""
         current_value = self._extract_preferred_artist_from_text(
@@ -1564,6 +1576,9 @@ class TattooTextExtractor:
         )
         if current_value:
             return cast(PreferredArtist, current_value)
+        llm_artist = self._client_named_llm_artist(llm_value, current_message)
+        if llm_artist:
+            return cast(PreferredArtist, llm_artist)
         for message in reversed(recent_chat_history):
             if message.role != "user":
                 continue
@@ -1578,6 +1593,29 @@ class TattooTextExtractor:
         )
         normalized = self._normalize_preferred_artist(stored_value)
         return cast(PreferredArtist, normalized)
+
+    def _client_named_llm_artist(
+        self,
+        llm_value: str,
+        current_message: str,
+    ) -> str:
+        """Accept a model-selected artist only when the client named them.
+
+        The model may otherwise echo the studio's own suggestion, so the
+        artist must appear in the latest client statement, not a question.
+        """
+        artist = self._normalize_preferred_artist(llm_value)
+        if not artist or artist == "No preference" or "?" in current_message:
+            return ""
+        normalized = " ".join(current_message.casefold().split())
+        names = [
+            alias
+            for alias, display_name in _ARTIST_NAME_ALIASES.items()
+            if display_name == artist
+        ]
+        if any(re.search(rf"\b{re.escape(name)}\b", normalized) for name in names):
+            return artist
+        return ""
 
     def _resolve_project_type(
         self,
@@ -1848,6 +1886,10 @@ class TattooTextExtractor:
         current_value = self._extract_artist_preference_mode(current_message)
         if current_value != "unknown":
             return current_value
+        if preferred_artist == "No preference":
+            return "no_preference"
+        if preferred_artist:
+            return "specific"
         for message in reversed(recent_chat_history):
             if message.role != "user":
                 continue
@@ -1860,17 +1902,8 @@ class TattooTextExtractor:
             existing_db_state,
             ("artist_preference_mode",),
         ).casefold()
-        if stored in {
-            "specific",
-            "recommend",
-            "no_preference",
-            "unknown",
-        }:
+        if stored in {"specific", "recommend", "no_preference"}:
             return cast(ArtistPreferenceMode, stored)
-        if preferred_artist == "No preference":
-            return "no_preference"
-        if preferred_artist:
-            return "specific"
         return "unknown"
 
     def _resolve_pricing_requested(
@@ -2892,16 +2925,7 @@ class TattooTextExtractor:
     def _extract_preferred_artist_from_text(self, text: str) -> str:
         """Extract a canonical artist preference, including legacy aliases."""
         normalized = " ".join(text.casefold().replace("’", "'").split())
-        aliases = {
-            "hossam": "Hossam",
-            "hoss": "Hossam",
-            "nina": "Nina",
-            "lana": "Lana",
-            "sandra": "Sandra",
-            "sliva": "Sliva",
-            "silva": "Sliva",
-            "mila": "Mila",
-        }
+        aliases = _ARTIST_NAME_ALIASES
         matches: list[tuple[int, str]] = []
         no_preference_pattern = re.compile(
             r"\b(?:no\s+(?:artist\s+)?preference|any\s+artist|"
@@ -2912,8 +2936,10 @@ class TattooTextExtractor:
         for alias, display_name in aliases.items():
             escaped = re.escape(alias)
             selection_patterns = (
-                rf"\b(?:prefer|preferred|choose|chose|select|selected)\s+"
+                rf"\b(?:prefer|preferring|preferred|choose|choosing|chose|"
+                rf"chosen|select|selecting|selected)\s+"
                 rf"(?:artist\s+)?{escaped}\b",
+                rf"\b(?:opt|opting|opted|go|going|went)\s+for\s+{escaped}\b",
                 rf"\b(?:go|going)\s+with\s+{escaped}\b",
                 rf"\b(?:move|moving|go|going)\s+(?:forward|ahead)\s+with\s+"
                 rf"{escaped}\b",

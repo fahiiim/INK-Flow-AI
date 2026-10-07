@@ -19,9 +19,12 @@ from ai_brain.vector_store import VectorStoreManager
 class StaticExtractionLLM:
     """Return the fields a well-behaved model extracts for the final turn."""
 
+    def __init__(self, **overrides: object) -> None:
+        self._overrides = overrides
+
     def invoke(self, messages: object) -> SimpleNamespace:
         """Return a complete extraction payload."""
-        payload = {
+        payload: dict[str, object] = {
             "client_name": "Fahim Sarker",
             "tattoo_idea": "black abstract symbol with curved strokes and dots",
             "placement": "nose",
@@ -36,6 +39,7 @@ class StaticExtractionLLM:
             "artist_preference_mode": "specific",
             "missing_information": [],
         }
+        payload.update(self._overrides)
         return SimpleNamespace(content=json.dumps(payload))
 
 
@@ -108,9 +112,139 @@ _NOSE_STATE = {
 }
 
 
+_CHOOSING_THREAD = [
+    Message(
+        role="user",
+        content=(
+            "Hello, I want a tattoo on my nose just like this picture. "
+            "How much will it cost"
+        ),
+    ),
+    Message(
+        role="assistant",
+        content=(
+            "Dear Fahim,\n\nBased on the reference, would approximately "
+            "3–5 cm long suit you? Also, do you have a preferred artist, or "
+            "are you open to a match based on the style?\n\nKind regards,\n"
+            "Tattoo Hysteria"
+        ),
+    ),
+    Message(
+        role="user",
+        content=(
+            "yes, It would be about 3cm. and about the artists, I dont know "
+            "them. could you please describe about the artists"
+        ),
+    ),
+    Message(
+        role="assistant",
+        content=(
+            "Dear Fahim,\n\nWould you like to choose Sandra, or would you "
+            "prefer to leave the artist choice open? And would you prefer an "
+            "online appointment or a studio visit?\n\nKind regards,\n"
+            "Tattoo Hysteria"
+        ),
+    ),
+]
+_CHOOSING_MESSAGE = (
+    "Okay them im choosing sandra and its gonna be a studio visit for this "
+    "new tattoo, ill come at friday"
+)
+_CHOOSING_STATE = {
+    "lead": {
+        "id": 25,
+        "name": "Fahim Sarker",
+        "email": "fahimsarker0805@gmail.com",
+        "source": "outlook",
+    },
+    "intake": {
+        "source": "outlook",
+        "placement": "nose",
+        "style_tags": ["blackwork", "abstract", "illustrative"],
+        "client_name": "Fahim Sarker",
+        "size_estimate_cm": "3 cm",
+        "color_preference": "Black, as shown in the nose design",
+        "preferred_artist": "",
+        "suggested_artist": "Sandra",
+        "artist_preference_mode": "unknown",
+        "previous_image_urls": ["https://example.com/reference.png"],
+    },
+}
+
+
+@pytest.mark.parametrize("llm_artist", ["Sandra", ""])
+def test_choosing_sandra_in_outlook_completes_intake(llm_artist: str) -> None:
+    """'im choosing sandra' selects Sandra and completes the intake."""
+    extractor = TattooTextExtractor(
+        llm=cast(
+            ChatOpenAI,
+            StaticExtractionLLM(
+                preferred_artist=llm_artist,
+                artist_preference_mode="unknown",
+                date="2026-10-09",
+                availability="2026-10-09",
+            ),
+        ),
+    )
+
+    draft = extractor.extract(
+        current_message=_CHOOSING_MESSAGE,
+        style_tags=[],
+        existing_db_state=_CHOOSING_STATE,
+        recent_chat_history=_CHOOSING_THREAD,
+    )
+
+    assert draft.preferred_artist == "Sandra"
+    assert draft.artist_preference_mode == "specific"
+    assert draft.missing_information == []
+
+
+def test_llm_artist_requires_client_to_name_that_artist() -> None:
+    """The model cannot select the studio's suggestion on the client's behalf."""
+    extractor = TattooTextExtractor(
+        llm=cast(
+            ChatOpenAI,
+            StaticExtractionLLM(preferred_artist="Sandra"),
+        ),
+    )
+
+    draft = extractor.extract(
+        current_message="It's a new tattoo and I'll visit the studio on Friday.",
+        style_tags=[],
+        existing_db_state=_CHOOSING_STATE,
+        recent_chat_history=_CHOOSING_THREAD,
+    )
+
+    assert draft.preferred_artist == ""
+    assert "preferred artist" in draft.missing_information
+
+
+def test_llm_artist_is_ignored_for_questions_about_that_artist() -> None:
+    """Asking about an artist is not a selection even if the model says so."""
+    extractor = TattooTextExtractor(
+        llm=cast(
+            ChatOpenAI,
+            StaticExtractionLLM(preferred_artist="Sandra"),
+        ),
+    )
+
+    draft = extractor.extract(
+        current_message="Is Sandra available on Friday?",
+        style_tags=[],
+        existing_db_state=_CHOOSING_STATE,
+        recent_chat_history=_CHOOSING_THREAD,
+    )
+
+    assert draft.preferred_artist == ""
+
+
 @pytest.mark.parametrize(
     "message",
     [
+        "Okay them im choosing sandra and its gonna be a studio visit",
+        "I've chosen Sandra.",
+        "I'm opting for Sandra.",
+        "I'll go for Sandra.",
         "I think I'll move forward with Sandra then.",
         "I think I’ll go ahead with Sandra.",
         "Let's proceed with Sandra.",
