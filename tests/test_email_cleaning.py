@@ -122,7 +122,7 @@ def test_realistic_second_email_extracts_only_client_answers() -> None:
     assert result.color_preference == "color"
     assert result.date == "2026-09-12"
     assert result.time == ""
-    assert result.preferred_artist == "Hoss"
+    assert result.preferred_artist == "Hossam"
     assert result.appointment_type == "studio_visit"
     assert result.tattoo_project_type == "new tattoo"
     assert result.missing_information == ["tattoo style"]
@@ -179,7 +179,7 @@ def test_artist_only_followup_preserves_every_other_stored_value() -> None:
     assert result.tattoo_idea == "Colorful flower"
     assert result.color_preference == "color"
     assert result.time == ""
-    assert result.preferred_artist == "Hoss"
+    assert result.preferred_artist == "Hossam"
     assert result.appointment_type == "studio_visit"
     assert result.tattoo_project_type == "new tattoo"
 
@@ -269,7 +269,7 @@ def test_real_email_answers_normalize_inches_and_black_and_grey() -> None:
     assert result.color_preference == "black-and-grey"
     assert result.date == expected_date
     assert result.availability == expected_date
-    assert result.preferred_artist == "Silva"
+    assert result.preferred_artist == "Sliva"
     assert result.appointment_type == "studio_visit"
     assert result.tattoo_project_type == "new tattoo"
     assert result.tattoo_idea == ""
@@ -330,6 +330,33 @@ def test_latest_centimetre_answer_overrides_earlier_inches() -> None:
 
     assert result.size_estimate_cm == "5 cm"
     assert result.tattoo_idea == "Name and date in calligraphy"
+
+
+def test_legacy_artist_names_normalize_to_updated_display_names() -> None:
+    """Existing Hoss and Silva records remain compatible with the new names."""
+    extractor = TattooTextExtractor(
+        llm=cast(ChatOpenAI, FailingExtractionLLM()),
+    )
+
+    hossam = extractor.extract(
+        current_message="I prefer Hoss.",
+        style_tags=["watercolor"],
+        existing_db_state={"lead": {"name": "Fahim Sarker"}},
+    )
+    sliva = extractor.extract(
+        current_message="I prefer Silva.",
+        style_tags=["pixel-art"],
+        existing_db_state={"lead": {"name": "Fahim Sarker"}},
+    )
+    mila = extractor.extract(
+        current_message="I prefer Mila.",
+        style_tags=["new-school"],
+        existing_db_state={"lead": {"name": "Fahim Sarker"}},
+    )
+
+    assert hossam.preferred_artist == "Hossam"
+    assert sliva.preferred_artist == "Sliva"
+    assert mila.preferred_artist == "Mila"
 
 
 def test_calligraphic_wording_conversation_preserves_the_complete_quote() -> None:
@@ -407,7 +434,7 @@ def test_calligraphic_wording_conversation_preserves_the_complete_quote() -> Non
         calendar_date.today().toordinal() + next_wednesday_offset
     ).isoformat()
     assert second.date == expected_wednesday
-    assert second.preferred_artist == "Hoss"
+    assert second.preferred_artist == "Hossam"
     assert second.appointment_type == "studio_visit"
     assert second.tattoo_project_type == "new tattoo"
     assert second.missing_information == ["reference images"]
