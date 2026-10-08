@@ -66,6 +66,13 @@ _ARTIST_NAME_ALIASES: dict[str, str] = {
     "silva": "Sliva",
     "mila": "Mila",
 }
+_ARTIST_ONLY_IDEA_PATTERN = re.compile(
+    r"^(?:"
+    + "|".join(sorted(_ARTIST_NAME_ALIASES, key=len, reverse=True))
+    + r")(?:\s+(?:for|to|as|by|with|do|does|doing|done|my|me|this|that|the|"
+    r"a|an|it|one|piece|work|artist|tattoo|tattooist|tattoos|please))*$",
+    flags=re.IGNORECASE,
+)
 _DIRECTIONAL_BACK_BEFORE_PATTERN = re.compile(
     r"\b(?:front|side|top|left|right|forth)\s+(?:to|and|&|or)\s+$"
 )
@@ -2267,6 +2274,8 @@ class TattooTextExtractor:
             "tattoo help",
         }:
             return True
+        if _ARTIST_ONLY_IDEA_PATTERN.fullmatch(normalized):
+            return True
         style_only = normalized.removesuffix(" tattoo").strip()
         if style_only in _STYLE_ONLY_IDEA_VALUES:
             return True
@@ -3037,10 +3046,12 @@ class TattooTextExtractor:
                 rf"{escaped}\b",
                 rf"\b{escaped}\s+(?:it\s+is|sounds\s+(?:good|great|perfect))\b",
                 rf"\b(?:want|book)\s+(?:with\s+)?{escaped}\b",
+                rf"\b(?:want|need|like|have|get)\s+{escaped}\s+"
+                rf"(?:for|to|as)\b",
                 rf"\b{escaped}\b.{{0,25}}\b(?:is|as)\s+my\s+"
-                rf"(?:preferred\s+)?artist\b",
-                rf"\bmy\s+(?:preferred\s+)?artist\s+(?:is|would\s+be)\s+"
-                rf"{escaped}\b",
+                rf"(?:preferred\s+)?(?:tattoo\s+)?artist\b",
+                rf"\bmy\s+(?:preferred\s+)?(?:tattoo\s+)?artist\s+"
+                rf"(?:is|would\s+be)\s+{escaped}\b",
                 rf"^(?:i(?:'d|\s+would)\s+(?:prefer\s+)?)?"
                 rf"{escaped}(?:\s+please)?[.!\s]*$",
             )
