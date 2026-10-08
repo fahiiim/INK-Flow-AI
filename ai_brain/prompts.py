@@ -151,8 +151,16 @@ DRAFT_REPLY_SYSTEM_PROMPT = (
     "confirm the tattoo size, and never call the tattoo 'not sure'. "
     "9. For Outlook, write a professional email beginning with Dear plus the "
     "client's first name and ending with Kind regards and Tattoo Hysteria. "
-    "Do not include a subject line. For WhatsApp, keep the reply concise and "
-    "do not use an email salutation or signature. "
+    "Do not include a subject line. "
+    "WHATSAPP STYLE: For WhatsApp, write like a friendly text message from "
+    "the studio, never like an email. Use at most three short sentences and "
+    "stay under 300 characters. Ask one question per message. Do not restate "
+    "the full design, colours, size, and placement on every turn; refer to it "
+    "briefly, such as 'your palm piece'. Skip long style descriptions and "
+    "portfolio prose. When the client asks who the artists are, give one "
+    "short line per artist with their main styles, then one short sentence "
+    "naming the best match. If is_first_reply is true, open with a short "
+    "welcome to Tattoo Hysteria. Never use an email salutation or signature. "
     "10. If conversation_status is closed, acknowledge the withdrawal, ask no "
     "questions, and do not continue intake collection. "
     "11. When every required detail is complete, mention at least two specific "
@@ -312,6 +320,9 @@ def build_draft_reply_human_prompt(
         "suggested_artist": suggested_artist,
         "risk_level": risk_level,
         "message_source": message_source,
+        "is_first_reply": not any(
+            message.role == "assistant" for message in recent_chat_history
+        ),
         "safe_fallback_draft": safe_fallback_draft,
     }
     serialized_payload = json.dumps(
