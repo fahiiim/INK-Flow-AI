@@ -17,7 +17,7 @@ from .artist_config import ArtistConfigManager, ArtistProfile
 from .cold_start import COLD_START_THRESHOLD, ColdStartManager
 from .decision_schemas import DecisionHistoryExample
 from .llm import get_chat_model
-from .llm_health import record_llm_failure
+from .llm_health import llm_failure_context, record_llm_failure
 from .pricing import parse_size_cm
 from .prompts import (
     DRAFT_REPLY_SYSTEM_PROMPT,
@@ -460,7 +460,11 @@ class TattooRouter:
             )
         except Exception as exc:  # pragma: no cover - defensive branch
             record_llm_failure(exc)
-            LOGGER.warning("Draft reply LLM fallback used: %s", exc)
+            LOGGER.warning(
+                "Draft reply LLM fallback used: %s [%s]",
+                exc,
+                llm_failure_context(exc),
+            )
             return fallback_draft
 
     def _validate_draft_reply(
@@ -1138,7 +1142,11 @@ class TattooRouter:
             return _RoutingLLMOutput.model_validate(parsed)
         except Exception as exc:  # pragma: no cover - defensive branch
             record_llm_failure(exc)
-            LOGGER.warning("Routing LLM fallback used: %s", exc)
+            LOGGER.warning(
+                "Routing LLM fallback used: %s [%s]",
+                exc,
+                llm_failure_context(exc),
+            )
             return self._fallback_llm_output(
                 suggested_artist=suggested_artist,
                 risk_level=risk_level,
