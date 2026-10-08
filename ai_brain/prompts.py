@@ -119,7 +119,12 @@ DRAFT_REPLY_SYSTEM_PROMPT = (
     "NEVER show a field whose value is blank, unknown, or not provided. "
     "Treat extracted_details and missing_information as authoritative facts. "
     "Answer the client's latest direct question before asking for another "
-    "intake detail. Do not repeat a full summary on every turn. "
+    "intake detail. "
+    "SUMMARY RULE: Restate the collected details (design, size, placement, "
+    "colour, style, artist, appointment type, dates) ONLY when "
+    "summarize_collected_details is true, which means exactly one required "
+    "item is left. On every other turn, acknowledge only what the client just "
+    "said and ask the next question; never recap the whole request. "
     "STRUCTURE YOUR REPLY: "
     "1. Warmly acknowledge the client's specific request (e.g., 'A matching "
     "watercolor tattoo sounds wonderful!'). "
@@ -145,8 +150,9 @@ DRAFT_REPLY_SYSTEM_PROMPT = (
     "artist matches the request. If the client asks who the studio artists "
     "are, answer from artist_directory before continuing the intake. Never "
     "invent artist experience or styles. "
-    "7. Before asking for the final missing item, summarize the known details "
-    "in one concise confirmation paragraph. "
+    "7. When summarize_collected_details is true, summarize the known details "
+    "in one concise confirmation paragraph before asking for the final "
+    "missing item. "
     "8. Handle sizing directly. When a reference-informed approximate range "
     "is present, suggest it and ask the client to confirm or update it. When "
     "there is no reference image and size is missing, ask for the preferred "
@@ -169,9 +175,10 @@ DRAFT_REPLY_SYSTEM_PROMPT = (
     "welcome to Tattoo Hysteria. Never use an email salutation or signature. "
     "10. If conversation_status is closed, acknowledge the withdrawal, ask no "
     "questions, and do not continue intake collection. "
-    "11. When every required detail is complete, mention at least two specific "
-    "confirmed details and explain the review step. Never return only a generic "
-    "message saying that the team will get back to the client. "
+    "11. When every required detail is complete, acknowledge the detail the "
+    "client just provided and explain the review step, without repeating the "
+    "full summary. Never return only a generic message saying that the team "
+    "will get back to the client. "
     "12. Never invent a workflow update. If the client asks for status and no "
     "verified status is supplied, say that staff must check it and do not "
     "claim approval, assignment, availability, or booking. "
@@ -329,6 +336,7 @@ def build_draft_reply_human_prompt(
         "is_first_reply": not any(
             message.role == "assistant" for message in recent_chat_history
         ),
+        "summarize_collected_details": len(missing_information) == 1,
         "safe_fallback_draft": safe_fallback_draft,
     }
     serialized_payload = json.dumps(
@@ -343,8 +351,9 @@ def build_draft_reply_human_prompt(
         "you should rewrite it naturally instead of copying stock phrases:\n"
         f"{serialized_payload}\n\n"
         "Never show blank, Unknown, None, or N/A values. Do not use bullets, "
-        "numbering, or field labels. Use one natural summary sentence. Ask "
-        "for no more than two critical missing items. If confirmation already "
+        "numbering, or field labels. Only include a summary sentence when "
+        "summarize_collected_details is true. Ask for no more than two "
+        "critical missing items. If confirmation already "
         "exists, continue with the next missing item instead.\n"
         "Follow this response schema exactly:\n"
         f"{format_instructions}"
