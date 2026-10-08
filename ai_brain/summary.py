@@ -64,6 +64,11 @@ class HighRiskSummaryBuilder:
 
     def combine_with_draft(self, summary: str, draft_reply: str) -> str:
         """Place the client draft after the staff summary for Telegram."""
+        if not draft_reply.strip():
+            return (
+                f"{summary}\n\nDRAFT REPLY\n(No draft: the AI service is "
+                "unavailable. Please reply to the client manually.)"
+            )
         return f"{summary}\n\nDRAFT REPLY\n{draft_reply}"
 
     def _client_description(
