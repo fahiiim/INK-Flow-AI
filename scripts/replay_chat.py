@@ -137,7 +137,10 @@ def main() -> None:
         )
         index += 1
         _print_turn(index, message, result, verbose=not args.quiet)
-        history.append(Message(role="assistant", content=result.draft_reply))
+        if result.draft_reply:
+            history.append(
+                Message(role="assistant", content=result.draft_reply)
+            )
 
 
 if __name__ == "__main__":
