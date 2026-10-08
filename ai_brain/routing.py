@@ -24,7 +24,7 @@ from .prompts import (
     build_draft_reply_human_prompt,
     build_routing_human_prompt,
 )
-from .reply import ConversationReplyComposer
+from .reply import ARTIST_ROSTER_PATTERN, ConversationReplyComposer
 from .review_policy import (
     SPECIALISED_PLACEMENT_REASON,
     STATUS_UPDATE_REASON,
@@ -81,6 +81,13 @@ _ARTIST_DISPLAY_ALIASES = {
     "hoss": "hossam",
     "silva": "sliva",
 }
+_WHATSAPP_MAX_REPLY_CHARS = 350
+_WHATSAPP_MAX_DIRECTORY_REPLY_CHARS = 750
+_STUDIO_NAME = "Tattoo Hysteria"
+_LEADING_GREETING_PATTERN = re.compile(
+    r"^(?:hi|hello|hey)(?:\s+there)?(?:\s+[A-Za-z][\w'-]*)?\s*[!,.\-—–]+\s*",
+    flags=re.IGNORECASE,
+)
 
 
 class _RoutingLLMOutput(BaseModel):
@@ -275,6 +282,74 @@ class TattooRouter:
         message_source: MessageSource,
         review_reasons: list[str],
     ) -> str:
+        """Generate a draft and apply channel-specific finishing rules."""
+        reply = self._compose_draft_reply(
+            extracted=extracted,
+            current_message=current_message,
+            recent_chat_history=recent_chat_history,
+            suggested_artist=suggested_artist,
+            risk_level=risk_level,
+            existing_db_state=existing_db_state,
+            message_source=message_source,
+            review_reasons=review_reasons,
+        )
+        if (
+            message_source != "whatsapp"
+            or extracted.conversation_status == "closed"
+            or any(message.role == "assistant" for message in recent_chat_history)
+        ):
+            return reply
+        return self._with_whatsapp_welcome(
+            reply,
+            self._client_first_name(extracted, existing_db_state),
+        )
+
+    def _with_whatsapp_welcome(self, reply: str, first_name: str) -> str:
+        """Open the first WhatsApp reply with a studio welcome."""
+        opening = reply[:120].casefold()
+        if "welcome" in opening and _STUDIO_NAME.casefold() in opening:
+            return reply
+        body = _LEADING_GREETING_PATTERN.sub("", reply.strip(), count=1)
+        if body:
+            body = body[0].upper() + body[1:]
+        greeting = f"Hi {first_name}" if first_name else "Hi"
+        welcome = f"{greeting}, welcome to {_STUDIO_NAME}!"
+        return f"{welcome} {body}".strip()
+
+    def _client_first_name(
+        self,
+        extracted: TattooExtractionDraft,
+        existing_db_state: dict[str, Any],
+    ) -> str:
+        """Return a usable first name from extraction or backend state."""
+        candidates: list[object] = [extracted.client_name]
+        for record in (
+            existing_db_state.get("lead"),
+            existing_db_state.get("intake"),
+            existing_db_state,
+        ):
+            if isinstance(record, dict):
+                candidates.extend(
+                    record.get(key) for key in ("client_name", "name")
+                )
+        for candidate in candidates:
+            if isinstance(candidate, str) and candidate.strip():
+                first = candidate.split()[0].strip(",.")
+                if first.isalpha():
+                    return first.capitalize()
+        return ""
+
+    def _compose_draft_reply(
+        self,
+        extracted: TattooExtractionDraft,
+        current_message: str,
+        recent_chat_history: list[Message],
+        suggested_artist: SuggestedArtist,
+        risk_level: RiskLevel,
+        existing_db_state: dict[str, Any],
+        message_source: MessageSource,
+        review_reasons: list[str],
+    ) -> str:
         """Generate and strictly validate a client-facing draft reply."""
         suggested_artist_details = self._artist_profile_summary(
             suggested_artist
@@ -440,6 +515,20 @@ class TattooRouter:
                 "Draft asks for completed fields: "
                 + ", ".join(repeated_fields)
             )
+        if message_source == "whatsapp":
+            limit = (
+                _WHATSAPP_MAX_DIRECTORY_REPLY_CHARS
+                if self._is_artist_roster_question(current_message)
+                else _WHATSAPP_MAX_REPLY_CHARS
+            )
+            if len(reply) > limit:
+                raise ValueError(
+                    f"WhatsApp draft exceeds {limit} characters."
+                )
+            if re.match(r"^dear\b", reply, flags=re.IGNORECASE) or (
+                "kind regards" in normalized
+            ):
+                raise ValueError("WhatsApp draft uses email formatting.")
         if message_source == "outlook":
             if reply.casefold().startswith("subject:"):
                 raise ValueError("Outlook draft must not include a subject.")
@@ -556,16 +645,7 @@ class TattooRouter:
 
     def _is_artist_roster_question(self, message: str) -> bool:
         """Return whether the client requested the studio artist directory."""
-        return bool(
-            re.search(
-                r"\b(?:who\s+are\s+(?:the|your)\s+artists|"
-                r"artists?\s+in\s+(?:the|your)\s+(?:shop|studio)|"
-                r"guide\s+me\s+about\s+(?:them|the\s+artists)|"
-                r"tell\s+me\s+about\s+(?:the|your)\s+artists)\b",
-                message,
-                flags=re.IGNORECASE,
-            )
-        )
+        return bool(ARTIST_ROSTER_PATTERN.search(message))
 
     def _suggest_artist(
         self,
