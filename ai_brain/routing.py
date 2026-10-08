@@ -24,7 +24,11 @@ from .prompts import (
     build_draft_reply_human_prompt,
     build_routing_human_prompt,
 )
-from .reply import ARTIST_ROSTER_PATTERN, ConversationReplyComposer
+from .reply import (
+    ARTIST_CHOICE_HELP_PATTERN,
+    ARTIST_ROSTER_PATTERN,
+    ConversationReplyComposer,
+)
 from .review_policy import (
     SPECIALISED_PLACEMENT_REASON,
     STATUS_UPDATE_REASON,
@@ -483,17 +487,31 @@ class TattooRouter:
             raise ValueError("Draft reply delegates size selection to an artist.")
         if extracted.conversation_status == "closed" and "?" in reply:
             raise ValueError("Closed inquiries cannot contain questions.")
-        if self._is_artist_roster_question(current_message):
+        mentioned_artists = [
+            artist
+            for artist in ARTIST_PREFERENCE_OPTIONS
+            if re.search(rf"\b{artist.casefold()}\b", normalized)
+        ]
+        if (
+            self._is_artist_roster_question(current_message)
+            and not ARTIST_CHOICE_HELP_PATTERN.search(current_message)
+        ):
             missing_artists = [
                 artist
                 for artist in ARTIST_PREFERENCE_OPTIONS
-                if artist.casefold() not in normalized
+                if artist not in mentioned_artists
             ]
             if missing_artists:
                 raise ValueError(
                     "Artist-roster reply omitted: "
                     + ", ".join(missing_artists)
                 )
+        if (
+            self._is_artist_roster_question(current_message)
+            and len(mentioned_artists) >= 4
+            and reply.count("\n") < 3
+        ):
+            raise ValueError("Artist list must put each artist on its own line.")
         if (
             extracted.missing_information
             and extracted.conversation_status != "closed"
@@ -629,11 +647,11 @@ class TattooRouter:
             profile = profiles.get(display_name.casefold())
             if profile is None:
                 continue
-            specialties = self._natural_list(profile.specialties)
-            descriptions.append(f"{display_name} ({specialties})")
+            specialties = ", ".join(profile.specialties)
+            descriptions.append(f"• {display_name}: {specialties}")
         if not descriptions:
             return ""
-        return "Our resident artists are " + self._natural_list(descriptions) + "."
+        return "Here are our resident artists:\n" + "\n".join(descriptions)
 
     def _natural_list(self, values: list[str]) -> str:
         """Join client-facing values with natural punctuation."""
