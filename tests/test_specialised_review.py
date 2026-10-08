@@ -7,7 +7,7 @@ from typing import cast
 from langchain_openai import ChatOpenAI
 
 from ai_brain.routing import TattooRouter
-from ai_brain.schemas import ClientIntent, TattooExtractionDraft
+from ai_brain.schemas import ClientIntent, Message, TattooExtractionDraft
 
 
 class FailingLLM:
@@ -42,29 +42,79 @@ def _tongue_draft(
     )
 
 
-def test_tongue_request_pauses_intake_for_immediate_staff_review() -> None:
-    """Specialised placement is reviewed before artist or booking flow."""
+def test_incomplete_tongue_request_keeps_collecting_details() -> None:
+    """Specialised placement no longer stops intake before it is complete."""
     router = TattooRouter(llm=cast(ChatOpenAI, FailingLLM()))
 
     result = router.route(
         _tongue_draft(),
-        current_message="Okay then proceed",
+        current_message="Yes, I also want it on my tongue, how much will it cost",
+        recent_chat_history=[Message(role="assistant", content="Hi there!")],
         existing_db_state={"lead": {"name": "Fahim Sarker"}},
-        message_source="outlook",
+        message_source="whatsapp",
     )
 
     assert result.risk_level == "low"
+    assert result.staff_review_required is False
+    assert result.intake_status == "collecting_info"
+    assert result.telegram_review_required is False
+    assert result.review_reasons == []
+    assert result.suggested_artist == "Unclear"
+    assert "tongue tattoos need studio approval" in result.draft_reply
+    assert "?" in result.draft_reply
+    assert "flagged your request" not in result.draft_reply
+
+
+def test_tongue_notice_is_only_given_once() -> None:
+    router = TattooRouter(llm=cast(ChatOpenAI, FailingLLM()))
+    history = [
+        Message(
+            role="assistant",
+            content=(
+                "Just so you know, tongue tattoos need studio approval before "
+                "an artist, price, or booking can be confirmed. Do you have a "
+                "preferred artist?"
+            ),
+        ),
+    ]
+
+    result = router.route(
+        _tongue_draft(),
+        current_message="no preference",
+        recent_chat_history=history,
+        existing_db_state={"lead": {"name": "Fahim Sarker"}},
+        message_source="whatsapp",
+    )
+
+    assert "need studio approval" not in result.draft_reply
+
+
+def test_complete_tongue_request_escalates_with_specialised_reason() -> None:
+    """Once every detail is collected, staff review the full intake."""
+    router = TattooRouter(llm=cast(ChatOpenAI, FailingLLM()))
+    complete = _tongue_draft().model_copy(
+        update={
+            "preferred_artist": "No preference",
+            "artist_preference_mode": "no_preference",
+            "tattoo_project_type": "new tattoo",
+            "missing_information": [],
+        }
+    )
+
+    result = router.route(
+        complete,
+        current_message="It's a new tattoo",
+        recent_chat_history=[Message(role="assistant", content="Hi there!")],
+        existing_db_state={"lead": {"name": "Fahim Sarker"}},
+        message_source="whatsapp",
+    )
+
+    assert result.risk_level == "high"
     assert result.staff_review_required is True
-    assert result.intake_status == "needs_staff_review"
-    assert result.auto_reply_allowed is False
     assert result.auto_reply is False
-    assert result.model_dump(mode="json", by_alias=True)["Auto-reply"] is False
     assert result.telegram_review_required is True
     assert "specialised_placement_requires_approval" in result.review_reasons
-    assert result.suggested_artist == "Unclear"
-    assert "flagged your request for review" in result.draft_reply
     assert "Nothing has been approved or booked" in result.draft_reply
-    assert "?" not in result.draft_reply
 
 
 def test_status_question_never_invents_a_workflow_update() -> None:
