@@ -15,6 +15,7 @@ from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
 
 from .errors import AnalysisPipelineError
 from .llm import get_chat_model
+from .llm_health import record_llm_failure
 from .prompts import VISION_SYSTEM_PROMPT
 from .schemas import (
     STYLE_TAG_OPTIONS,
@@ -62,6 +63,7 @@ class TattooVisionAnalyzer:
             raw_text = self._invoke_vision_model(data_uris)
             return self._parse_vision_output(raw_text)
         except Exception as exc:  # pragma: no cover - defensive branch
+            record_llm_failure(exc)
             LOGGER.warning("Vision analysis failed: %s", exc)
 
         return self._unknown_output()
