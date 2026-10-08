@@ -80,10 +80,25 @@ ARTIST_ROSTER_PATTERN = re.compile(
     r"(?:know|details?|information|info)\s+about\s+(?:the|your)\s+artists)\b",
     flags=re.IGNORECASE,
 )
+ARTIST_CHOICE_HELP_PATTERN = re.compile(
+    r"\b(?:help\s+me\s+(?:to\s+)?(?:choose|pick|select|find|decide)|"
+    r"(?:choose|pick|find)\s+(?:a|an|the)\s+(?:suitable|right|good|best)|"
+    r"suitable\s+artist|right\s+artist|best\s+artist|"
+    r"recommend|suggest|which\s+artist|who\s+(?:would|should|is\s+best))\b",
+    flags=re.IGNORECASE,
+)
 _ARTIST_GUIDANCE_PATTERN = re.compile(
     r"\b(?:recommend|suggest|best|better|which\s+artist|who\s+would|"
     r"portfolio|speciali[sz]|tell\s+me\s+about)\b|"
-    + ARTIST_ROSTER_PATTERN.pattern,
+    + ARTIST_ROSTER_PATTERN.pattern
+    + "|"
+    + ARTIST_CHOICE_HELP_PATTERN.pattern,
+    flags=re.IGNORECASE,
+)
+_SUMMARY_CONFIRMATION_MARKER = "does that sound right"
+_DAY_PATTERN = re.compile(
+    r"\b(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|"
+    r"friday|saturday|sunday)\b",
     flags=re.IGNORECASE,
 )
 _STUDIO_AVAILABILITY_PATTERN = re.compile(
@@ -160,7 +175,7 @@ _QUESTION_MARKERS = {
     "color preference": ("black and grey", "colour", "color"),
     "tattoo style": ("tattoo style",),
     "reference images": ("reference", "inspiration image"),
-    "preferred artist": ("preferred artist", "choose hoss"),
+    "preferred artist": ("preferred artist", "choose hoss", "go ahead with"),
     "appointment type": (
         "appointment type",
         "studio visit",
@@ -271,13 +286,14 @@ class ConversationReplyComposer:
                 "I'll have the studio team review "
                 f"{review_subject} and get back to you."
             )
-            reply = " ".join(reply_parts)
+            reply = self._join_reply_parts(reply_parts)
             return self._avoid_exact_repeat(reply, history)
 
         questions = self._select_questions(
             missing_information=self._question_information_for_turn(
                 list(extracted.missing_information),
                 current_message,
+                suggested_artist,
             ),
             history=history,
         )
@@ -285,6 +301,12 @@ class ConversationReplyComposer:
             extracted=extracted,
             questions=questions,
             history=history,
+        )
+        questions = self._personalize_artist_question(
+            questions,
+            extracted,
+            suggested_artist,
+            history,
         )
         if questions:
             reply_parts = [acknowledgement]
@@ -298,7 +320,7 @@ class ConversationReplyComposer:
                 reply_parts.append(
                     self._pricing_message(extracted, history)
                 )
-            reply = " ".join([*reply_parts, *questions])
+            reply = self._join_reply_parts([*reply_parts, *questions])
             return self._avoid_exact_repeat(reply, history)
 
         if risk_level == "high":
@@ -308,7 +330,7 @@ class ConversationReplyComposer:
             reply_parts.append(
                 "I'll have the studio team review this and get back to you."
             )
-            reply = " ".join(reply_parts)
+            reply = self._join_reply_parts(reply_parts)
             return self._avoid_exact_repeat(reply, history)
 
         reply_parts = [acknowledgement]
@@ -322,7 +344,7 @@ class ConversationReplyComposer:
             "I've got the main details now. I'll pass this to the team for "
             "a quick review."
         )
-        reply = " ".join(reply_parts)
+        reply = self._join_reply_parts(reply_parts)
         return self._avoid_exact_repeat(reply, history)
 
     def compose_validation(
@@ -371,7 +393,11 @@ class ConversationReplyComposer:
                 suggested_artist_details=suggested_artist_details,
                 artist_directory=artist_directory,
             )
-        if self._details_already_confirmed(current_message, history):
+        if (
+            self._details_already_confirmed(current_message, history)
+            or self._summary_already_shown(history)
+            or _ARTIST_GUIDANCE_PATTERN.search(current_message)
+        ):
             return self.compose(
                 extracted=extracted,
                 current_message=current_message,
@@ -398,9 +424,16 @@ class ConversationReplyComposer:
             missing_information=self._question_information_for_turn(
                 list(extracted.missing_information),
                 current_message,
+                suggested_artist,
             ),
             history=history,
         )[:1]
+        questions = self._personalize_artist_question(
+            questions,
+            extracted,
+            suggested_artist,
+            history,
+        )
         reply_parts = []
         if _POSSIBLE_PATTERN.search(current_message):
             reply_parts.append("Yes, we can help with that.")
@@ -433,7 +466,7 @@ class ConversationReplyComposer:
             reply_parts.append(self._pricing_message(extracted, history))
         reply_parts.extend(questions)
         return self._avoid_exact_repeat(
-            " ".join(reply_parts),
+            self._join_reply_parts(reply_parts),
             history,
         )
 
@@ -475,6 +508,7 @@ class ConversationReplyComposer:
         question_information = self._question_information_for_turn(
             missing_information,
             current_message,
+            suggested_artist,
         )
         correction = any(
             term in current_message.casefold() for term in _CORRECTION_TERMS
@@ -574,6 +608,12 @@ class ConversationReplyComposer:
                 extracted=extracted,
                 questions=questions,
                 history=history,
+            )
+            questions = self._personalize_artist_question(
+                questions,
+                extracted,
+                suggested_artist,
+                history,
             )
             if questions:
                 if last_requirement and len(questions) == 1:
@@ -755,8 +795,26 @@ class ConversationReplyComposer:
             return ""
         if not _ARTIST_GUIDANCE_PATTERN.search(current_message):
             return ""
+        offers_choice_help = bool(
+            ARTIST_CHOICE_HELP_PATTERN.search(current_message)
+        ) and suggested_artist in ARTIST_PREFERENCE_OPTIONS
         if ARTIST_ROSTER_PATTERN.search(current_message) and artist_directory:
-            return artist_directory
+            if not offers_choice_help:
+                return artist_directory
+            known_styles = [
+                style
+                for style in extracted.style_tags
+                if style not in {"unknown", "black-and-grey"}
+            ][:2]
+            style_phrase = (
+                f" for your {' and '.join(known_styles)} piece"
+                if known_styles
+                else " for your piece"
+            )
+            return (
+                f"{artist_directory}\n\n"
+                f"{suggested_artist} would be the best match{style_phrase}."
+            )
         if suggested_artist == "Unclear":
             return (
                 "I don't have enough of a portfolio match to recommend one "
@@ -1017,9 +1075,15 @@ class ConversationReplyComposer:
         self,
         missing_information: list[str],
         current_message: str,
+        suggested_artist: str = "Unclear",
     ) -> list[str]:
         """Answer artist guidance before requesting an explicit selection."""
         if not _ARTIST_GUIDANCE_PATTERN.search(current_message):
+            return missing_information
+        if (
+            suggested_artist in ARTIST_PREFERENCE_OPTIONS
+            and ARTIST_CHOICE_HELP_PATTERN.search(current_message)
+        ):
             return missing_information
         return [
             item for item in missing_information if item != "preferred artist"
@@ -1513,7 +1577,12 @@ class ConversationReplyComposer:
             )
         if any(term in normalized for term in _CORRECTION_TERMS):
             return "Thanks for clarifying - I've updated that."
-        if any(term in normalized for term in _SCHEDULE_TERMS):
+        if any(
+            term in normalized for term in _SCHEDULE_TERMS
+        ) or _CLOCK_TIME_PATTERN.search(current_message):
+            timing = self._timing_phrase(current_message)
+            if timing:
+                return f"Got it, I've noted {timing}."
             return "Got it - I've noted the timing."
 
         alternatives = (
@@ -1566,6 +1635,72 @@ class ConversationReplyComposer:
             ),
             "",
         )
+
+    def _timing_phrase(self, message: str) -> str:
+        """Echo the client's day and clock time, e.g. "today at 5 pm"."""
+        day_match = _DAY_PATTERN.search(message)
+        time_match = _CLOCK_TIME_PATTERN.search(message)
+        day = day_match.group(0).casefold() if day_match else ""
+        if day and day not in {"today", "tomorrow", "tonight"}:
+            day = day.capitalize()
+        clock = (
+            " ".join(time_match.group(0).split()).casefold()
+            if time_match
+            else ""
+        )
+        clock = re.sub(r"(\d)(am|pm)$", r"\1 \2", clock)
+        if day and clock:
+            return f"{day} at {clock}"
+        return day or clock
+
+    def _join_reply_parts(self, parts: Sequence[str]) -> str:
+        """Join sentences with spaces, keeping multi-line blocks separate."""
+        reply = ""
+        previous = ""
+        for part in parts:
+            if not part:
+                continue
+            if not reply:
+                reply = part
+            elif "\n" in part or "\n" in previous:
+                reply = f"{reply}\n\n{part}"
+            else:
+                reply = f"{reply} {part}"
+            previous = part
+        return reply
+
+    def _summary_already_shown(self, history: Sequence[Message]) -> bool:
+        """Return whether the detail summary was already offered for review."""
+        return any(
+            message.role == "assistant"
+            and _SUMMARY_CONFIRMATION_MARKER in message.content.casefold()
+            for message in history
+        )
+
+    def _personalize_artist_question(
+        self,
+        questions: list[str],
+        extracted: TattooExtractionDraft,
+        suggested_artist: str,
+        history: Sequence[Message],
+    ) -> list[str]:
+        """Offer the recommended artist instead of the generic artist menu."""
+        if suggested_artist not in ARTIST_PREFERENCE_OPTIONS:
+            return questions
+        recommended_before = suggested_artist.casefold() in (
+            self._last_assistant_message(list(history)).casefold()
+        )
+        if not (
+            extracted.artist_preference_mode == "recommend"
+            or recommended_before
+        ):
+            return questions
+        generic = _MISSING_QUESTIONS["preferred artist"]
+        offer = (
+            f"Would you like to go ahead with {suggested_artist}, "
+            "or would you prefer another artist?"
+        )
+        return [offer if question == generic else question for question in questions]
 
     def _avoid_exact_repeat(
         self,
