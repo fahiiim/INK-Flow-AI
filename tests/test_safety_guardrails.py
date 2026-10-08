@@ -117,6 +117,7 @@ def test_draft_reply_natural_tone() -> None:
 
     normalized_reply = result.draft_reply.casefold()
     assert result.draft_reply.startswith(
+        "Hi, welcome to Tattoo Hysteria! "
         "Got it, a 5cm fine-line lotus on your inner wrist!"
     )
     assert "black-and-grey or colour" in result.draft_reply
