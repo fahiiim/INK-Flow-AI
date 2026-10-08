@@ -132,7 +132,9 @@ def test_group_watercolor_request_keeps_separate_person_details() -> None:
         existing_db_state={"lead": {"name": "Kosa Martin"}},
         message_source="whatsapp",
     )
-    assert whatsapp.draft_reply.startswith("Yes, we can help with that.")
+    assert whatsapp.draft_reply.startswith(
+        "Hi Kosa, welcome to Tattoo Hysteria! Yes, we can help with that."
+    )
     assert "2 watercolor tattoos" in whatsapp.draft_reply
 
 
