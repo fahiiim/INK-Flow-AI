@@ -404,8 +404,12 @@ class ConversationReplyComposer:
                 suggested_artist_details=suggested_artist_details,
                 artist_directory=artist_directory,
             )
+        first_reply = not any(
+            message.role == "assistant" for message in history
+        )
         if (
-            self._details_already_confirmed(current_message, history)
+            (len(extracted.missing_information) != 1 and not first_reply)
+            or self._details_already_confirmed(current_message, history)
             or self._summary_already_shown(history)
             or _ARTIST_GUIDANCE_PATTERN.search(current_message)
         ):
@@ -548,20 +552,18 @@ class ConversationReplyComposer:
             ),
         ]
 
-        if last_requirement or not missing_information:
+        if last_requirement or (not is_follow_up and not missing_information):
             sections.append(
                 self._outlook_confirmation_summary(
                     extracted,
                     suggested_artist,
                 )
             )
-        else:
-            request_summary = self._human_request_summary(extracted)
-            if request_summary and not self._assistant_history_contains(
-                request_summary,
-                history,
-            ):
-                sections.append(request_summary)
+        elif missing_information:
+            if not is_follow_up:
+                request_summary = self._human_request_summary(extracted)
+                if request_summary:
+                    sections.append(request_summary)
 
             complexity_notice = self._complexity_notice(extracted)
             if complexity_notice and not self._assistant_history_contains(
@@ -659,14 +661,9 @@ class ConversationReplyComposer:
                     "next step."
                 )
         else:
-            confirmation = self._outlook_confirmation_summary(
-                extracted,
-                suggested_artist,
-            )
-            if confirmation not in sections:
-                sections.append(confirmation)
             sections.append(
-                "Our studio team will review everything and "
+                ("That completes the details we need. " if is_follow_up else "")
+                + "Our studio team will review everything and "
                 + (
                     "contact you with pricing and the next steps."
                     if pricing_requested
