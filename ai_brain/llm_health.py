@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextvars import ContextVar
+from datetime import datetime, timezone
 
 _QUOTA_ERROR_CODES = frozenset(
     {
@@ -42,12 +43,41 @@ def llm_quota_exhausted() -> bool:
     return _quota_exhausted.get()
 
 
+def llm_failure_context(exc: BaseException) -> str:
+    """Describe a model failure with OpenAI's request ID and the UTC time."""
+    request_id = ""
+    status_code: object = None
+    for error in _error_chain(exc):
+        request_id = request_id or str(getattr(error, "request_id", "") or "")
+        if not request_id:
+            response = getattr(error, "response", None)
+            headers = getattr(response, "headers", None)
+            if headers is not None:
+                request_id = str(headers.get("x-request-id", "") or "")
+        status_code = status_code or getattr(error, "status_code", None)
+    utc_time = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    parts = [
+        f"request_id={request_id or 'unavailable'}",
+        f"utc_time={utc_time}",
+    ]
+    if status_code:
+        parts.append(f"status={status_code}")
+    return " ".join(parts)
+
+
+def _error_chain(exc: BaseException) -> list[BaseException]:
+    """Return an exception followed by its causes, without cycles."""
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and all(current is not seen for seen in chain):
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
 def is_quota_exhausted_error(exc: BaseException) -> bool:
     """Detect OpenAI quota or billing errors, including wrapped causes."""
-    seen: set[int] = set()
-    current: BaseException | None = exc
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
+    for current in _error_chain(exc):
         code = getattr(current, "code", None)
         if isinstance(code, str) and code in _QUOTA_ERROR_CODES:
             return True
@@ -62,5 +92,4 @@ def is_quota_exhausted_error(exc: BaseException) -> bool:
         message = str(current).casefold()
         if any(phrase in message for phrase in _QUOTA_ERROR_PHRASES):
             return True
-        current = current.__cause__ or current.__context__
     return False
