@@ -126,7 +126,7 @@ def test_normal_date_message_gets_a_simple_acknowledgement() -> None:
         risk_level="high",
     )
 
-    assert reply.startswith("Got it - I've noted the timing.")
+    assert reply.startswith("Got it, I've noted today at 2 pm.")
     assert "You're right" not in reply
     assert "Would you like colour or black and grey?" in reply
     assert "date" not in reply.casefold()
