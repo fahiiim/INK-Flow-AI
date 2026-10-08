@@ -430,6 +430,11 @@ class TattooRouter:
                     "pricing_requested": extracted.pricing_requested,
                     "client_intent": extracted.client_intent,
                     "conversation_status": extracted.conversation_status,
+                    "specialised_placement_review": (
+                        specialised_placement_requires_review(
+                            extracted.placement
+                        )
+                    ),
                     "suggested_artist_profile": suggested_artist_details,
                     "artist_directory": artist_directory,
                 },
@@ -1074,12 +1079,12 @@ class TattooRouter:
         self,
         review_reasons: list[str],
     ) -> bool:
-        """Return whether intake must pause before ordinary collection."""
-        immediate_reasons = {
-            SPECIALISED_PLACEMENT_REASON,
-            STATUS_UPDATE_REASON,
-        }
-        return bool(immediate_reasons.intersection(review_reasons))
+        """Return whether intake must pause before ordinary collection.
+
+        Specialised placements keep collecting details and escalate with
+        the full intake once it is complete.
+        """
+        return STATUS_UPDATE_REASON in review_reasons
 
     def _routing_llm_output(
         self,
