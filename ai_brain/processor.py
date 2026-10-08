@@ -18,6 +18,7 @@ from .decision_schemas import (
 )
 from .errors import AnalysisPipelineError
 from .extraction import TattooTextExtractor
+from .llm_health import llm_quota_exhausted, reset_llm_health
 from .outlook_classification import OutlookInquiryClassifier
 from .routing import TattooRouter
 from .schemas import (
@@ -28,6 +29,10 @@ from .schemas import (
 )
 from .vision import TattooVisionAnalyzer
 
+_QUOTA_EXHAUSTED_REASON = (
+    "AI provider quota exhausted: no reply was generated. "
+    "A staff member must reply manually."
+)
 _AUTOMATION_PAUSED_DRAFT = "A staff member will reply to you shortly."
 _AUTOMATION_PAUSED_EMAIL_DRAFT = (
     "Hello,\n\n"
@@ -86,6 +91,7 @@ class StudioAIBrain:
         if self._is_automation_paused(inquiry):
             return self._build_automation_paused_output(inquiry)
 
+        reset_llm_health()
         outlook_classification = self.outlook_classifier.classify(inquiry)
         if (
             inquiry.message_source == "outlook"
@@ -116,6 +122,8 @@ class StudioAIBrain:
             existing_db_state=inquiry.existing_db_state,
             message_source=inquiry.message_source,
         )
+        if llm_quota_exhausted():
+            return self._suppress_reply_for_quota(analysis)
         is_reply_channel = inquiry.message_source == "whatsapp" or (
             inquiry.message_source == "outlook"
             and outlook_classification.is_tattoo_inquiry
@@ -147,6 +155,26 @@ class StudioAIBrain:
             analysis=analysis,
             current_message=inquiry.current_message,
             context=context,
+        )
+
+    def _suppress_reply_for_quota(
+        self,
+        analysis: AIExtractionOutput,
+    ) -> AIExtractionOutput:
+        """Send nothing to the client when the AI provider has no quota."""
+        return analysis.model_copy(
+            update={
+                "draft_reply": "",
+                "auto_reply_allowed": False,
+                "auto_reply": False,
+                "staff_review_required": True,
+                "telegram_review_required": True,
+                "review_reasons": [
+                    *analysis.review_reasons,
+                    _QUOTA_EXHAUSTED_REASON,
+                ][-20:],
+                "ai_reasoning": _QUOTA_EXHAUSTED_REASON,
+            }
         )
 
     def _is_automation_paused(self, inquiry: TattooInquiryInput) -> bool:
