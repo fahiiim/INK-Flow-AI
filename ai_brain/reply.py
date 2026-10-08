@@ -71,18 +71,19 @@ _POSSIBLE_PATTERN = re.compile(
     r"\b(?:is|would)\b.{0,30}\bpossible\b",
     flags=re.IGNORECASE,
 )
-_ARTIST_GUIDANCE_PATTERN = re.compile(
-    r"\b(?:recommend|suggest|best|better|which\s+artist|who\s+would|"
-    r"who\s+are\s+(?:the|your)\s+artists|artists?\s+in\s+(?:the|your)\s+"
-    r"(?:shop|studio)|guide\s+me\s+about\s+(?:them|the\s+artists)|"
-    r"portfolio|speciali[sz]|tell\s+me\s+about)\b",
-    flags=re.IGNORECASE,
-)
-_ARTIST_ROSTER_PATTERN = re.compile(
+ARTIST_ROSTER_PATTERN = re.compile(
     r"\b(?:who\s+are\s+(?:the|your)\s+artists|"
     r"artists?\s+in\s+(?:the|your)\s+(?:shop|studio)|"
     r"guide\s+me\s+about\s+(?:them|the\s+artists)|"
-    r"tell\s+me\s+about\s+(?:the|your)\s+artists)\b",
+    r"(?:tell|let)\s+me\s+(?:know\s+)?about\s+(?:the|your)\s+artists|"
+    r"(?:describe|introduce)\s+(?:about\s+)?(?:the|your)\s+artists|"
+    r"(?:know|details?|information|info)\s+about\s+(?:the|your)\s+artists)\b",
+    flags=re.IGNORECASE,
+)
+_ARTIST_GUIDANCE_PATTERN = re.compile(
+    r"\b(?:recommend|suggest|best|better|which\s+artist|who\s+would|"
+    r"portfolio|speciali[sz]|tell\s+me\s+about)\b|"
+    + ARTIST_ROSTER_PATTERN.pattern,
     flags=re.IGNORECASE,
 )
 _STUDIO_AVAILABILITY_PATTERN = re.compile(
@@ -754,7 +755,7 @@ class ConversationReplyComposer:
             return ""
         if not _ARTIST_GUIDANCE_PATTERN.search(current_message):
             return ""
-        if _ARTIST_ROSTER_PATTERN.search(current_message) and artist_directory:
+        if ARTIST_ROSTER_PATTERN.search(current_message) and artist_directory:
             return artist_directory
         if suggested_artist == "Unclear":
             return (
