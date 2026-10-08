@@ -10,6 +10,7 @@ from .review_policy import (
     SPECIALISED_PLACEMENT_REASON,
     STATUS_UPDATE_REASON,
     is_proceed_confirmation,
+    specialised_placement_requires_review,
 )
 from .schemas import (
     ARTIST_PREFERENCE_OPTIONS,
@@ -286,6 +287,8 @@ class ConversationReplyComposer:
                 "I'll have the studio team review "
                 f"{review_subject} and get back to you."
             )
+            if specialised_placement_requires_review(extracted.placement):
+                reply_parts.append(self._specialised_placement_notice())
             reply = self._join_reply_parts(reply_parts)
             return self._avoid_exact_repeat(reply, history)
 
@@ -310,6 +313,12 @@ class ConversationReplyComposer:
         )
         if questions:
             reply_parts = [acknowledgement]
+            specialised_notice = self._specialised_collection_notice(
+                extracted,
+                history,
+            )
+            if specialised_notice:
+                reply_parts.append(specialised_notice)
             if complexity_notice:
                 reply_parts.append(complexity_notice)
             if artist_guidance:
@@ -330,6 +339,8 @@ class ConversationReplyComposer:
             reply_parts.append(
                 "I'll have the studio team review this and get back to you."
             )
+            if specialised_placement_requires_review(extracted.placement):
+                reply_parts.append(self._specialised_placement_notice())
             reply = self._join_reply_parts(reply_parts)
             return self._avoid_exact_repeat(reply, history)
 
@@ -438,6 +449,12 @@ class ConversationReplyComposer:
         if _POSSIBLE_PATTERN.search(current_message):
             reply_parts.append("Yes, we can help with that.")
         reply_parts.append(summary)
+        specialised_notice = self._specialised_collection_notice(
+            extracted,
+            history,
+        )
+        if specialised_notice:
+            reply_parts.append(specialised_notice)
         complexity_notice = self._complexity_notice(extracted)
         if complexity_notice:
             reply_parts.append(complexity_notice)
@@ -563,6 +580,16 @@ class ConversationReplyComposer:
         )
         if artist_guidance:
             sections.append(artist_guidance)
+
+        if missing_information:
+            specialised_notice = self._specialised_collection_notice(
+                extracted,
+                history,
+            )
+            if specialised_notice:
+                sections.append(specialised_notice)
+        elif specialised_placement_requires_review(extracted.placement):
+            sections.append(self._specialised_placement_notice())
 
         size_guidance = self._size_guidance(extracted, history)
         if size_guidance:
@@ -717,6 +744,28 @@ class ConversationReplyComposer:
             sections.append("Kind regards,\nTattoo Hysteria")
         return "\n\n".join(sections)
 
+    def _specialised_collection_notice(
+        self,
+        extracted: TattooExtractionDraft,
+        history: Sequence[Message],
+    ) -> str:
+        """Mention once that a specialised placement needs studio approval."""
+        if not specialised_placement_requires_review(extracted.placement):
+            return ""
+        already_mentioned = any(
+            message.role == "assistant"
+            and "tongue" in message.content.casefold()
+            and re.search(r"\b(?:approv|review)", message.content.casefold())
+            for message in history
+        )
+        if already_mentioned:
+            return ""
+        return (
+            "Just so you know, tongue tattoos need studio approval before an "
+            "artist, price, or booking can be confirmed, so I'll collect your "
+            "details for the team to review."
+        )
+
     def _specialised_placement_notice(self) -> str:
         """Return the fixed, non-medical tongue-placement review notice."""
         return (
@@ -795,6 +844,11 @@ class ConversationReplyComposer:
             return ""
         if not _ARTIST_GUIDANCE_PATTERN.search(current_message):
             return ""
+        if specialised_placement_requires_review(extracted.placement):
+            return (
+                "For this placement, the studio team will choose a suitable "
+                "artist once the request is approved."
+            )
         offers_choice_help = bool(
             ARTIST_CHOICE_HELP_PATTERN.search(current_message)
         ) and suggested_artist in ARTIST_PREFERENCE_OPTIONS
@@ -939,6 +993,7 @@ class ConversationReplyComposer:
 
     def _idea_fragment(self, value: str) -> str:
         """Convert a short extracted title into natural sentence casing."""
+        value = value.strip().rstrip(".!;,")
         if not value:
             return ""
         if value[:1].isupper() and value[1:].islower():
