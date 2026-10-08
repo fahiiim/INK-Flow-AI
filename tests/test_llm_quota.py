@@ -10,7 +10,7 @@ import openai
 from langchain_openai import ChatOpenAI
 
 from ai_brain.extraction import TattooTextExtractor
-from ai_brain.llm_health import is_quota_exhausted_error
+from ai_brain.llm_health import is_quota_exhausted_error, llm_failure_context
 from ai_brain.processor import StudioAIBrain
 from ai_brain.routing import TattooRouter
 from ai_brain.summary import HighRiskSummaryBuilder
@@ -22,7 +22,11 @@ def _quota_error() -> openai.RateLimitError:
     request = httpx.Request("POST", "https://api.openai.com/v1/responses")
     return openai.RateLimitError(
         "Error code: 429 - You have no credits remaining.",
-        response=httpx.Response(429, request=request),
+        response=httpx.Response(
+            429,
+            request=request,
+            headers={"x-request-id": "req_test123"},
+        ),
         body={
             "error": {
                 "message": "You have no credits remaining.",
@@ -75,6 +79,22 @@ def test_quota_error_is_detected_directly_and_when_wrapped() -> None:
     assert is_quota_exhausted_error(error) is True
     assert is_quota_exhausted_error(wrapped) is True
     assert is_quota_exhausted_error(TimeoutError("Request timed out.")) is False
+
+
+def test_failure_context_reports_request_id_and_utc_time() -> None:
+    wrapped = RuntimeError("Tattoo detail extraction failed.")
+    wrapped.__cause__ = _quota_error()
+
+    context = llm_failure_context(wrapped)
+
+    assert "request_id=req_test123" in context
+    assert "status=429" in context
+    assert "utc_time=" in context and context.split("utc_time=")[1].split()[
+        0
+    ].endswith("+00:00")
+    assert "request_id=unavailable" in llm_failure_context(
+        TimeoutError("Request timed out.")
+    )
 
 
 def test_exhausted_quota_sends_no_whatsapp_reply() -> None:
