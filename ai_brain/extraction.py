@@ -65,6 +65,34 @@ _ARTIST_NAME_ALIASES: dict[str, str] = {
     "silva": "Sliva",
     "mila": "Mila",
 }
+_DIRECTIONAL_BACK_BEFORE_PATTERN = re.compile(
+    r"\b(?:front|side|top|left|right|forth)\s+(?:to|and|&|or)\s+$"
+)
+_DIRECTIONAL_BACK_AFTER_PATTERN = re.compile(
+    r"^\s+(?:to|and|&|or)\s+(?:front|forth)\b"
+)
+_VERB_BACK_BEFORE_PATTERN = re.compile(
+    r"\b(?:come|comes|coming|came|get|gets|getting|got|go|going|went|"
+    r"write|writing|reply|replying|call|calling|text|texting|message|"
+    r"bring|be|being|been|step|look|looking|hear|hold|holding|"
+    r"heading|way)\s+$"
+)
+_SUGGESTED_ARTIST_OFFER_PATTERN = re.compile(
+    r"\b(?:go\s+(?:ahead\s+)?with|book\s+(?:you\s+)?(?:in\s+)?with|"
+    r"work\s+with)\s+(?P<artist>[A-Za-z]+)\b",
+    flags=re.IGNORECASE,
+)
+_AFFIRMATIVE_REPLY_PATTERN = re.compile(
+    r"^\s*(?:yes|yeah|yep|yup|sure|ok|okay|alright|sounds\s+good|"
+    r"sounds\s+great|perfect|great|let'?s\s+do\s+it|go\s+ahead|"
+    r"that\s+works|fine)\b(?!.*\?)",
+    flags=re.IGNORECASE,
+)
+_HESITANT_REPLY_PATTERN = re.compile(
+    r"\b(?:but|not|no|think|maybe|another|other|instead|someone|else|"
+    r"wait|hold\s+on)\b",
+    flags=re.IGNORECASE,
+)
 _PRICING_PATTERN = re.compile(
     r"\b(?:price|pricing|cost|quote|how much|budget)\b",
     flags=re.IGNORECASE,
@@ -245,7 +273,14 @@ _CONCEPTLESS_INQUIRY_WORDS = {
     "estimate",
     "for",
     "get",
+    "getting",
     "give",
+    "have",
+    "make",
+    "making",
+    "my",
+    "new",
+    "some",
     "hello",
     "hey",
     "hi",
@@ -1391,18 +1426,22 @@ class TattooTextExtractor:
             ),
             placement=placement,
             size_estimate_cm=size_estimate_cm,
-            color_preference=self._resolve_context_field(
-                llm_value=llm_output.color_preference,
-                current_message=current_message,
-                recent_chat_history=recent_chat_history,
-                existing_db_state=existing_db_state,
-                state_keys=(
-                    "color_preference",
-                    "colour_preference",
-                    "color",
-                ),
-                value_extractor=self._extract_color_from_text,
-                field_terms=_COLOR_FIELD_TERMS,
+            color_preference=self._normalize_color_value(
+                self._resolve_context_field(
+                    llm_value=self._normalize_color_value(
+                        llm_output.color_preference
+                    ),
+                    current_message=current_message,
+                    recent_chat_history=recent_chat_history,
+                    existing_db_state=existing_db_state,
+                    state_keys=(
+                        "color_preference",
+                        "colour_preference",
+                        "color",
+                    ),
+                    value_extractor=self._extract_color_from_text,
+                    field_terms=_COLOR_FIELD_TERMS,
+                )
             ),
             date=self._normalize_date_value(
                 self._resolve_context_field(
@@ -1579,12 +1618,18 @@ class TattooTextExtractor:
         llm_artist = self._client_named_llm_artist(llm_value, current_message)
         if llm_artist:
             return cast(PreferredArtist, llm_artist)
-        for message in reversed(recent_chat_history):
-            if message.role != "user":
-                continue
+        turns = self._client_turns_with_prompts(
+            current_message,
+            recent_chat_history,
+        )
+        if turns:
+            confirmed = self._confirmed_offered_artist(*turns[-1])
+            if confirmed:
+                return cast(PreferredArtist, confirmed)
+        for prompt, message in reversed(turns[:-1]):
             history_value = self._extract_preferred_artist_from_text(
-                message.content
-            )
+                message
+            ) or self._confirmed_offered_artist(prompt, message)
             if history_value:
                 return cast(PreferredArtist, history_value)
         stored_value = self._get_state_text(
@@ -1593,6 +1638,41 @@ class TattooTextExtractor:
         )
         normalized = self._normalize_preferred_artist(stored_value)
         return cast(PreferredArtist, normalized)
+
+    def _client_turns_with_prompts(
+        self,
+        current_message: str,
+        recent_chat_history: list[Message],
+    ) -> list[tuple[str, str]]:
+        """Pair each client message with the assistant message before it."""
+        turns: list[tuple[str, str]] = []
+        last_assistant = ""
+        for message in recent_chat_history:
+            if message.role == "assistant":
+                last_assistant = message.content
+            else:
+                turns.append((last_assistant, message.content))
+        if not turns or turns[-1][1] != current_message:
+            turns.append((last_assistant, current_message))
+        return turns
+
+    def _confirmed_offered_artist(self, prompt: str, reply: str) -> str:
+        """Accept a short "yes" to an artist the studio just offered."""
+        if (
+            len(reply.strip()) > 60
+            or not _AFFIRMATIVE_REPLY_PATTERN.match(reply)
+            or _HESITANT_REPLY_PATTERN.search(reply)
+        ):
+            return ""
+        questions = " ".join(re.findall(r"[^.!?\n]*\?", prompt))
+        offered = [
+            _ARTIST_NAME_ALIASES[match.group("artist").casefold()]
+            for match in _SUGGESTED_ARTIST_OFFER_PATTERN.finditer(questions)
+            if match.group("artist").casefold() in _ARTIST_NAME_ALIASES
+        ]
+        if len(set(offered)) != 1:
+            return ""
+        return offered[0]
 
     def _client_named_llm_artist(
         self,
@@ -3144,6 +3224,12 @@ class TattooTextExtractor:
                     suffix,
                 ):
                     continue
+                if alias == "back" and self._is_non_body_back(
+                    normalized,
+                    match.start(),
+                    match.end(),
+                ):
+                    continue
                 if not self._phrase_is_negated(normalized, match.start()):
                     matches.append((match.start(), match.end(), canonical))
         if not matches:
@@ -3159,6 +3245,25 @@ class TattooTextExtractor:
             )
         ]
         return max(specific_matches, key=lambda item: item[0])[2]
+
+    def _is_non_body_back(self, text: str, start: int, end: int) -> bool:
+        """Detect "back" used as a direction or verb rather than placement."""
+        before = text[max(0, start - 30) : start]
+        after = text[end : end + 20]
+        return bool(
+            _DIRECTIONAL_BACK_BEFORE_PATTERN.search(before)
+            or _DIRECTIONAL_BACK_AFTER_PATTERN.match(after)
+            or _VERB_BACK_BEFORE_PATTERN.search(before)
+        )
+
+    def _normalize_color_value(self, value: str) -> str:
+        """Collapse free-text colour notes to a canonical client value."""
+        if self._is_blank(value):
+            return ""
+        canonical = self._extract_color_from_text(value)
+        if canonical:
+            return canonical
+        return re.split(r"[,;(]|\s+inferred\b", value, maxsplit=1)[0].strip()
 
     def _extract_color_from_text(self, text: str) -> str:
         """Normalize an explicit latest-message color preference."""
