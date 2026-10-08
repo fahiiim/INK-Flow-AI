@@ -96,12 +96,16 @@ becomes `high` only when the required intake is complete. Separately,
 but incomplete cases—such as group requests or an unknown size—to reach staff
 without falsely marking them complete.
 
-Tongue tattoo requests pause ordinary intake immediately. They keep the normal
-completeness-based risk level, but set `staff_review_required` and
+Tongue tattoo requests keep collecting every intake detail like any other
+request. The client is told once that the studio must approve the placement
+before an artist, price, or booking is confirmed, and no artist is recommended.
+When the intake is complete, the request becomes high risk and reaches staff
+with the `specialised_placement_requires_approval` review reason. Status-update
+questions pause intake immediately: they set `staff_review_required` and
 `telegram_review_required` to true, set `intake_status` to
-`needs_staff_review`, and disable both automatic-reply controls. Status-update
-questions follow the same manual-review path when no verified backend status
-is available. Image-led style wording is kept as `reference-led design` in the
+`needs_staff_review`, and disable both automatic-reply controls when no
+verified backend status is available. Image-led style wording is kept as
+`reference-led design` in the
 notes unless text or vision provides a supported named style.
 
 Use `/api/v1/inquiries/telegram-summary` whenever
