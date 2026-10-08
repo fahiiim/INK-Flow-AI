@@ -404,7 +404,8 @@ def test_matching_existing_tattoo_email_gets_a_specific_reply() -> None:
     assert routed.auto_reply_allowed is True
     assert routed.staff_review_required is False
     assert routed.telegram_review_required is False
-    assert "10-15 cm black-and-grey watercolor skeleton" in (
+    assert len(second.missing_information) > 1
+    assert "10-15 cm black-and-grey watercolor skeleton" not in (
         routed.draft_reply
     )
     assert "match an existing tattoo" in routed.draft_reply
