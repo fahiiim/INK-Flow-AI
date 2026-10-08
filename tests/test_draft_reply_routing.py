@@ -78,6 +78,7 @@ def _reasoning_response() -> str:
 def test_router_uses_exact_question_for_incomplete_whatsapp_intake() -> None:
     """Incomplete WhatsApp replies use the controlled intake wording."""
     expected_reply = (
+        "Hi, welcome to Tattoo Hysteria! "
         "Got it, a 5cm black-and-grey fine-line lotus tattoo on your inner "
         "wrist. "
         "Does that sound right, or would you like to change anything? "
@@ -117,6 +118,7 @@ def test_confirmed_history_continues_with_exact_next_question() -> None:
     )
 
     assert result.draft_reply == (
+        "Hi, welcome to Tattoo Hysteria! "
         "Got it. What are your preferred dates or general availability?"
     )
     assert "Please confirm" not in result.draft_reply
