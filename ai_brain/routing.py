@@ -538,6 +538,23 @@ class TattooRouter:
             raise ValueError(
                 "Completed-intake draft does not confirm any client details."
             )
+        if (
+            len(extracted.missing_information) != 1
+            and extracted.conversation_status != "closed"
+            and self._restated_detail_count(
+                reply,
+                extracted,
+                current_message,
+                count_styles=not self._is_artist_roster_question(
+                    current_message
+                ),
+            )
+            >= 3
+        ):
+            raise ValueError(
+                "Draft restates the collected details outside the final-item "
+                "turn."
+            )
         repeated_fields = self._questions_for_completed_fields(reply, extracted)
         if repeated_fields:
             raise ValueError(
@@ -568,6 +585,67 @@ class TattooRouter:
             if "tattoo hysteria" not in normalized:
                 raise ValueError("Outlook draft is missing the studio name.")
         return reply
+
+    def _restated_detail_count(
+        self,
+        draft_reply: str,
+        extracted: TattooExtractionDraft,
+        current_message: str = "",
+        count_styles: bool = True,
+    ) -> int:
+        """Count earlier-collected fields that a draft repeats back.
+
+        Details the client stated in the current message do not count, so a
+        reply can still acknowledge what was just said.
+        """
+
+        def normalize(text: str) -> str:
+            return " ".join(
+                re.sub(r"[\u2013\u2014-]", " ", text.casefold()).split()
+            )
+
+        reply = normalize(draft_reply)
+        message = normalize(current_message)
+
+        def recapped(pattern: str) -> bool:
+            return bool(
+                re.search(pattern, reply) and not re.search(pattern, message)
+            )
+
+        def phrase(value: str) -> str:
+            normalized = normalize(value)
+            if len(normalized) < 3:
+                return ""
+            return rf"\b{re.escape(normalized)}\b"
+
+        patterns: list[str] = []
+        patterns.append(phrase(extracted.placement))
+        size_numbers = re.findall(r"\d+(?:\.\d+)?", extracted.size_estimate_cm)
+        if size_numbers:
+            patterns.append(
+                "".join(
+                    rf"(?=.*\b{re.escape(number)}\b)" for number in size_numbers
+                )
+            )
+        if extracted.color_preference == "black-and-grey":
+            patterns.append(r"\bblack (?:and|&) gr[ae]y\b")
+        elif extracted.color_preference == "color":
+            patterns.append(r"\b(?:full )?colou?r(?:ed|ful)?\b")
+        if count_styles:
+            style_patterns = [
+                phrase(style)
+                for style in extracted.style_tags
+                if style not in {"unknown", "black-and-grey"}
+            ]
+            style_patterns = [pattern for pattern in style_patterns if pattern]
+            if style_patterns:
+                patterns.append("|".join(style_patterns))
+        patterns.append(phrase(extracted.tattoo_idea))
+        if extracted.preferred_artist not in {"", "No preference"}:
+            patterns.append(phrase(extracted.preferred_artist))
+        if extracted.appointment_type:
+            patterns.append(phrase(extracted.appointment_type.replace("_", " ")))
+        return sum(1 for pattern in patterns if pattern and recapped(pattern))
 
     def _mentions_confirmed_intake_detail(
         self,
