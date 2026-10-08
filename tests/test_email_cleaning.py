@@ -287,7 +287,7 @@ def test_real_email_answers_normalize_inches_and_black_and_grey() -> None:
     assert "Thanks, I've noted the tattoo type" in reply
     assert "We still need the following information" not in reply
     assert "custom estimate" not in reply
-    assert "12.7 cm black-and-grey calligraphy tattoo" in reply
+    assert "12.7 cm black-and-grey calligraphy tattoo" not in reply
     assert "What size would you prefer" not in reply
 
     routed = TattooRouter(
@@ -483,5 +483,6 @@ def test_calligraphic_wording_conversation_preserves_the_complete_quote() -> Non
     assert routed.auto_reply_allowed is False
     assert routed.draft_reply.startswith("Dear Fahim,")
     assert "sorry for asking again" in routed.draft_reply
-    assert "calligraphy" in routed.draft_reply.casefold()
+    assert "calligraphy" not in routed.draft_reply.casefold()
+    assert "That completes the details we need." in routed.draft_reply
     assert "contact you with pricing and the next steps" in routed.draft_reply
