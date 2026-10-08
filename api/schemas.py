@@ -119,5 +119,5 @@ class TelegramSummaryResponse(BaseModel):
         max_length=20,
     )
     summary: StrictStr = Field(min_length=1, max_length=5000)
-    draft_reply: StrictStr = Field(min_length=1, max_length=2000)
+    draft_reply: StrictStr = Field(default="", max_length=2000)
     telegram_message: StrictStr = Field(min_length=1, max_length=7000)
