@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .errors import AnalysisPipelineError
 from .email_cleaning import strip_quoted_email_content
 from .llm import get_chat_model
+from .llm_health import record_llm_failure
 from .prompts import EXTRACTION_SYSTEM_PROMPT, build_extraction_human_prompt
 from .review_policy import (
     is_reference_led_style_request,
@@ -817,6 +818,7 @@ class TattooTextExtractor:
                 missing_information=missing_information,
             )
         except Exception as exc:  # pragma: no cover - defensive branch
+            record_llm_failure(exc)
             LOGGER.warning("Text extraction fallback used: %s", exc)
             return self._build_fallback_draft(
                 current_message=normalized_message,
