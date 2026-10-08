@@ -479,7 +479,7 @@ def test_full_artist_and_scheduling_thread_preserves_every_answer() -> None:
     appointment = process("studio visit")
     assert appointment.appointment_type == "studio_visit"
     assert "preferred artist" in appointment.missing_information
-    assert "Do you have a preferred artist?" in appointment.draft_reply
+    assert "go ahead with Hossam" in appointment.draft_reply
 
     repeated_artist_question = process(
         "I don't know them personally; who would be the best for me?"
@@ -495,6 +495,7 @@ def test_full_artist_and_scheduling_thread_preserves_every_answer() -> None:
     assert "Do you have a preferred artist?" not in (
         availability_question.draft_reply
     )
+    assert "go ahead with" not in availability_question.draft_reply
 
     artist_and_time = process(
         "I prefer 4:00. Hoss is my preferred artist."
